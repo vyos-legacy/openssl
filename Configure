@@ -1745,7 +1745,7 @@ while (<IN>)
 		# $foo is to become "$prefix/lib$multilib/engines";
 		# as Makefile.org and engines/Makefile are adapted for
 		# $multilib suffix.
-		my $foo = "$prefix/lib/engines";
+		my $foo = "$prefix/lib/ssl/engines";
 		$foo =~ s/\\/\\\\/g;
 		print OUT "#define ENGINESDIR \"$foo\"\n";
 		}
