@@ -1,3 +1,12 @@
+openssl (0.9.8zc-1) unstable; urgency=low
+
+  [ Kim Hagen ]
+  * Upstream version update
+  
+  [ Alex Harpin ]
+
+ -- Alex Harpin <development@landsofshadow.co.uk>  Wed, 17 Dec 2014 07:07:36 +0000
+ 
 openssl (0.9.8zb-1) unstable; urgency=low
 
   * Version update
