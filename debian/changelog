@@ -1,5 +1,11 @@
 openssl (0.9.8zb-1) unstable; urgency=low
 
+  * Force release
+
+ -- Alex Harpin <development@landsofshadow.co.uk>  Wed, 17 Dec 2014 07:42:09 +0000
+ 
+openssl (0.9.8zb-1) unstable; urgency=low
+
   * Version update
 
  -- Kim Hagen <khagen@multi-development.com>  Mon, 11 Aug 2014 12:00:34 +0200
