@@ -1,3 +1,9 @@
+openssl (0.9.8zc+vyos2+lithium2) unstable; urgency=low
+
+  * Force release
+
+ -- Alex Harpin <development@landsofshadow.co.uk>  Thu, 18 Dec 2014 07:31:15 +0000
+ 
 openssl (0.9.8zc+vyos2+lithium1) unstable; urgency=low
 
   * Switch to VyOS versioning for build integration
