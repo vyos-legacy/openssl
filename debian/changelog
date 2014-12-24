@@ -1,3 +1,9 @@
+openssl (0.9.8zc+vyos2+lithium3) unstable; urgency=low
+
+  * Update maintainer address
+
+ -- Alex Harpin <development@landsofshadow.co.uk>  Wed, 24 Dec 2014 07:45:45 +0000
+ 
 openssl (0.9.8zc+vyos2+lithium2) unstable; urgency=low
 
   * Force release
