@@ -1,3 +1,11 @@
+openssl (0.9.8zc+vyos2+lithium4) unstable; urgency=low
+
+  [ Alex Harpin ]
+  * openssl: SSH command returns "Segmentation fault" on AMD64 (Bug #345)
+  * openssl: add dh_gencontrol to enable development builds
+
+ -- Alex Harpin <development@landsofshadow.co.uk>  Sun, 28 Dec 2014 18:37:12 +0000
+ 
 openssl (0.9.8zc+vyos2+lithium3) unstable; urgency=low
 
   * Update maintainer address
