@@ -158,7 +158,7 @@ binary-arch:	build
 	dh_makeshlibs -V "libssl0.9.8 (>= 0.9.8m-1)" --add-udeb="libcrypto0.9.8-udeb"
 	dh_shlibdeps -L libssl0.9.8 -l debian/libssl0.9.8/usr/lib
 	dh_installdeb
-	if [ -f "../.VYATTA_DEV_BUILD" ]; \
+	if [ -f "../.VYOS_DEV_BUILD" ]; \
 		then dh_gencontrol -- -v999.dev; \
 	else \
 		dh_gencontrol; \
