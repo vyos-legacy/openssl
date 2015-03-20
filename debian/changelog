@@ -1,3 +1,10 @@
+openssl (0.9.8zc+vyos1+helium5) unstable; urgency=low
+
+  [ Alex Harpin ]
+  * Update to upstream version 0.9.8zc
+  
+ -- Alex Harpin <development@landsofshadow.co.uk>  Fri, 20 Mar 2015 23:22:01 +0000
+ 
 openssl (0.9.8zb+vyos1+helium4) unstable; urgency=low
 
   [ Alex Harpin ]
