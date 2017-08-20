@@ -54,45 +54,92 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+
 #include <openssl/crypto.h>
-#include <openssl/buffer.h>
-#include <openssl/bn.h>
 
 #ifdef OPENSSL_SYS_WIN32
 # ifndef OPENSSL_NO_CAPIENG
 
+#  include <openssl/buffer.h>
+#  include <openssl/bn.h>
 #  include <openssl/rsa.h>
-
-#  include <windows.h>
 
 #  ifndef _WIN32_WINNT
 #   define _WIN32_WINNT 0x0400
 #  endif
 
+#  include <windows.h>
 #  include <wincrypt.h>
+#  include <malloc.h>
+#  ifndef alloca
+#   define alloca _alloca
+#  endif
 
-#  undef X509_EXTENSIONS
-#  undef X509_CERT_PAIR
+/*
+ * This module uses several "new" interfaces, among which is
+ * CertGetCertificateContextProperty. CERT_KEY_PROV_INFO_PROP_ID is
+ * one of possible values you can pass to function in question. By
+ * checking if it's defined we can see if wincrypt.h and accompanying
+ * crypt32.lib are in shape. The native MingW32 headers up to and
+ * including __W32API_VERSION 3.14 lack of struct DSSPUBKEY and the
+ * defines CERT_STORE_PROV_SYSTEM_A and CERT_STORE_READONLY_FLAG,
+ * so we check for these too and avoid compiling.
+ * Yes, it's rather "weak" test and if compilation fails,
+ * then re-configure with -DOPENSSL_NO_CAPIENG.
+ */
+#  if defined(CERT_KEY_PROV_INFO_PROP_ID) && \
+    defined(CERT_STORE_PROV_SYSTEM_A) && \
+    defined(CERT_STORE_READONLY_FLAG)
+#   define __COMPILE_CAPIENG
+#  endif                        /* CERT_KEY_PROV_INFO_PROP_ID */
+# endif                         /* OPENSSL_NO_CAPIENG */
+#endif                          /* OPENSSL_SYS_WIN32 */
+
+#ifdef __COMPILE_CAPIENG
+
+# undef X509_EXTENSIONS
+# undef X509_CERT_PAIR
 
 /* Definitions which may be missing from earlier version of headers */
-#  ifndef CERT_STORE_OPEN_EXISTING_FLAG
-#   define CERT_STORE_OPEN_EXISTING_FLAG                   0x00004000
-#  endif
+# ifndef CERT_STORE_OPEN_EXISTING_FLAG
+#  define CERT_STORE_OPEN_EXISTING_FLAG                   0x00004000
+# endif
 
-#  ifndef CERT_STORE_CREATE_NEW_FLAG
-#   define CERT_STORE_CREATE_NEW_FLAG                      0x00002000
-#  endif
+# ifndef CERT_STORE_CREATE_NEW_FLAG
+#  define CERT_STORE_CREATE_NEW_FLAG                      0x00002000
+# endif
 
-#  ifndef CERT_SYSTEM_STORE_CURRENT_USER
-#   define CERT_SYSTEM_STORE_CURRENT_USER                  0x00010000
-#  endif
+# ifndef CERT_SYSTEM_STORE_CURRENT_USER
+#  define CERT_SYSTEM_STORE_CURRENT_USER                  0x00010000
+# endif
 
-#  include <openssl/engine.h>
-#  include <openssl/pem.h>
-#  include <openssl/x509v3.h>
+# ifndef ALG_SID_SHA_256
+#  define ALG_SID_SHA_256                 12
+# endif
+# ifndef ALG_SID_SHA_384
+#  define ALG_SID_SHA_384                 13
+# endif
+# ifndef ALG_SID_SHA_512
+#  define ALG_SID_SHA_512                 14
+# endif
 
-#  include "e_capi_err.h"
-#  include "e_capi_err.c"
+# ifndef CALG_SHA_256
+#  define CALG_SHA_256            (ALG_CLASS_HASH | ALG_TYPE_ANY | ALG_SID_SHA_256)
+# endif
+# ifndef CALG_SHA_384
+#  define CALG_SHA_384            (ALG_CLASS_HASH | ALG_TYPE_ANY | ALG_SID_SHA_384)
+# endif
+# ifndef CALG_SHA_512
+#  define CALG_SHA_512            (ALG_CLASS_HASH | ALG_TYPE_ANY | ALG_SID_SHA_512)
+# endif
+
+# include <openssl/engine.h>
+# include <openssl/pem.h>
+# include <openssl/x509v3.h>
+
+# include "e_capi_err.h"
+# include "e_capi_err.c"
 
 static const char *engine_capi_id = "capi";
 static const char *engine_capi_name = "CryptoAPI ENGINE";
@@ -137,9 +184,9 @@ static int capi_load_ssl_client_cert(ENGINE *e, SSL *ssl,
                                      void *callback_data);
 
 static int cert_select_simple(ENGINE *e, SSL *ssl, STACK_OF(X509) *certs);
-#  ifdef OPENSSL_CAPIENG_DIALOG
+# ifdef OPENSSL_CAPIENG_DIALOG
 static int cert_select_dialog(ENGINE *e, SSL *ssl, STACK_OF(X509) *certs);
-#  endif
+# endif
 
 typedef PCCERT_CONTEXT(WINAPI *CERTDLG) (HCERTSTORE, HWND, LPCWSTR,
                                          LPCWSTR, DWORD, DWORD, void *);
@@ -150,8 +197,8 @@ typedef HWND(WINAPI *GETCONSWIN) (void);
  * global options and affects how other functions behave.
  */
 
-#  define CAPI_DBG_TRACE  2
-#  define CAPI_DBG_ERROR  1
+# define CAPI_DBG_TRACE  2
+# define CAPI_DBG_ERROR  1
 
 struct CAPI_CTX_st {
     int debug_level;
@@ -167,25 +214,25 @@ struct CAPI_CTX_st {
     DWORD store_flags;
 /* Lookup string meanings in load_private_key */
 /* Substring of subject: uses "storename" */
-#  define CAPI_LU_SUBSTR          1
+# define CAPI_LU_SUBSTR          1
 /* Friendly name: uses storename */
-#  define CAPI_LU_FNAME           2
+# define CAPI_LU_FNAME           2
 /* Container name: uses cspname, keytype */
-#  define CAPI_LU_CONTNAME        3
+# define CAPI_LU_CONTNAME        3
     int lookup_method;
 /* Info to dump with dumpcerts option */
 /* Issuer and serial name strings */
-#  define CAPI_DMP_SUMMARY        0x1
+# define CAPI_DMP_SUMMARY        0x1
 /* Friendly name */
-#  define CAPI_DMP_FNAME          0x2
+# define CAPI_DMP_FNAME          0x2
 /* Full X509_print dump */
-#  define CAPI_DMP_FULL           0x4
+# define CAPI_DMP_FULL           0x4
 /* Dump PEM format certificate */
-#  define CAPI_DMP_PEM            0x8
+# define CAPI_DMP_PEM            0x8
 /* Dump pseudo key (if possible) */
-#  define CAPI_DMP_PSKEY          0x10
+# define CAPI_DMP_PSKEY          0x10
 /* Dump key info (if possible) */
-#  define CAPI_DMP_PKEYINFO       0x20
+# define CAPI_DMP_PKEYINFO       0x20
     DWORD dump_flags;
     int (*client_cert_select) (ENGINE *e, SSL *ssl, STACK_OF(X509) *certs);
     CERTDLG certselectdlg;
@@ -198,20 +245,20 @@ static int capi_ctx_set_provname(CAPI_CTX * ctx, LPSTR pname, DWORD type,
                                  int check);
 static int capi_ctx_set_provname_idx(CAPI_CTX * ctx, int idx);
 
-#  define CAPI_CMD_LIST_CERTS             ENGINE_CMD_BASE
-#  define CAPI_CMD_LOOKUP_CERT            (ENGINE_CMD_BASE + 1)
-#  define CAPI_CMD_DEBUG_LEVEL            (ENGINE_CMD_BASE + 2)
-#  define CAPI_CMD_DEBUG_FILE             (ENGINE_CMD_BASE + 3)
-#  define CAPI_CMD_KEYTYPE                (ENGINE_CMD_BASE + 4)
-#  define CAPI_CMD_LIST_CSPS              (ENGINE_CMD_BASE + 5)
-#  define CAPI_CMD_SET_CSP_IDX            (ENGINE_CMD_BASE + 6)
-#  define CAPI_CMD_SET_CSP_NAME           (ENGINE_CMD_BASE + 7)
-#  define CAPI_CMD_SET_CSP_TYPE           (ENGINE_CMD_BASE + 8)
-#  define CAPI_CMD_LIST_CONTAINERS        (ENGINE_CMD_BASE + 9)
-#  define CAPI_CMD_LIST_OPTIONS           (ENGINE_CMD_BASE + 10)
-#  define CAPI_CMD_LOOKUP_METHOD          (ENGINE_CMD_BASE + 11)
-#  define CAPI_CMD_STORE_NAME             (ENGINE_CMD_BASE + 12)
-#  define CAPI_CMD_STORE_FLAGS            (ENGINE_CMD_BASE + 13)
+# define CAPI_CMD_LIST_CERTS             ENGINE_CMD_BASE
+# define CAPI_CMD_LOOKUP_CERT            (ENGINE_CMD_BASE + 1)
+# define CAPI_CMD_DEBUG_LEVEL            (ENGINE_CMD_BASE + 2)
+# define CAPI_CMD_DEBUG_FILE             (ENGINE_CMD_BASE + 3)
+# define CAPI_CMD_KEYTYPE                (ENGINE_CMD_BASE + 4)
+# define CAPI_CMD_LIST_CSPS              (ENGINE_CMD_BASE + 5)
+# define CAPI_CMD_SET_CSP_IDX            (ENGINE_CMD_BASE + 6)
+# define CAPI_CMD_SET_CSP_NAME           (ENGINE_CMD_BASE + 7)
+# define CAPI_CMD_SET_CSP_TYPE           (ENGINE_CMD_BASE + 8)
+# define CAPI_CMD_LIST_CONTAINERS        (ENGINE_CMD_BASE + 9)
+# define CAPI_CMD_LIST_OPTIONS           (ENGINE_CMD_BASE + 10)
+# define CAPI_CMD_LOOKUP_METHOD          (ENGINE_CMD_BASE + 11)
+# define CAPI_CMD_STORE_NAME             (ENGINE_CMD_BASE + 12)
+# define CAPI_CMD_STORE_FLAGS            (ENGINE_CMD_BASE + 13)
 
 static const ENGINE_CMD_DEFN capi_cmd_defns[] = {
     {CAPI_CMD_LIST_CERTS,
@@ -441,7 +488,7 @@ static int capi_init(ENGINE *e)
 
     ENGINE_set_ex_data(e, capi_idx, ctx);
 
-#  ifdef OPENSSL_CAPIENG_DIALOG
+# ifdef OPENSSL_CAPIENG_DIALOG
     {
         HMODULE cryptui = LoadLibrary(TEXT("CRYPTUI.DLL"));
         HMODULE kernel = GetModuleHandle(TEXT("KERNEL32.DLL"));
@@ -455,7 +502,7 @@ static int capi_init(ENGINE *e)
         if (cryptui && !OPENSSL_isservice())
             ctx->client_cert_select = cert_select_dialog;
     }
-#  endif
+# endif
 
     return 1;
 
@@ -499,6 +546,7 @@ static int bind_capi(ENGINE *e)
 {
     if (!ENGINE_set_id(e, engine_capi_id)
         || !ENGINE_set_name(e, engine_capi_name)
+        || !ENGINE_set_flags(e, ENGINE_FLAGS_NO_REGISTER_ALL)
         || !ENGINE_set_init_function(e, capi_init)
         || !ENGINE_set_finish_function(e, capi_finish)
         || !ENGINE_set_destroy_function(e, capi_destroy)
@@ -516,7 +564,7 @@ static int bind_capi(ENGINE *e)
 
 }
 
-#  ifndef OPENSSL_NO_DYNAMIC_ENGINE
+# ifndef OPENSSL_NO_DYNAMIC_ENGINE
 static int bind_helper(ENGINE *e, const char *id)
 {
     if (id && (strcmp(id, engine_capi_id) != 0))
@@ -528,7 +576,7 @@ static int bind_helper(ENGINE *e, const char *id)
 
 IMPLEMENT_DYNAMIC_CHECK_FN()
     IMPLEMENT_DYNAMIC_BIND_FN(bind_helper)
-#  else
+# else
 static ENGINE *engine_capi(void)
 {
     ENGINE *ret = ENGINE_new();
@@ -551,7 +599,7 @@ void ENGINE_load_capi(void)
     ENGINE_free(toadd);
     ERR_clear_error();
 }
-#  endif
+# endif
 
 static int lend_tobn(BIGNUM *bn, unsigned char *bin, int binlen)
 {
@@ -772,6 +820,18 @@ int capi_rsa_sign(int dtype, const unsigned char *m, unsigned int m_len,
     }
 /* Convert the signature type to a CryptoAPI algorithm ID */
     switch (dtype) {
+    case NID_sha256:
+        alg = CALG_SHA_256;
+        break;
+
+    case NID_sha384:
+        alg = CALG_SHA_384;
+        break;
+
+    case NID_sha512:
+        alg = CALG_SHA_512;
+        break;
+
     case NID_sha1:
         alg = CALG_SHA1;
         break;
@@ -809,7 +869,7 @@ int capi_rsa_sign(int dtype, const unsigned char *m, unsigned int m_len,
 
 /* Finally sign it */
     slen = RSA_size(rsa);
-    if (!CryptSignHashA(hash, capi_key->keyspec, NULL, 0, sigret, &slen)) {
+    if (!CryptSignHash(hash, capi_key->keyspec, NULL, 0, sigret, &slen)) {
         CAPIerr(CAPI_F_CAPI_RSA_SIGN, CAPI_R_ERROR_SIGNING_HASH);
         capi_addlasterror();
         goto err;
@@ -933,7 +993,7 @@ static DSA_SIG *capi_dsa_do_sign(const unsigned char *digest, int dlen,
 
     /* Finally sign it */
     slen = sizeof(csigbuf);
-    if (!CryptSignHashA(hash, capi_key->keyspec, NULL, 0, csigbuf, &slen)) {
+    if (!CryptSignHash(hash, capi_key->keyspec, NULL, 0, csigbuf, &slen)) {
         CAPIerr(CAPI_F_CAPI_DSA_DO_SIGN, CAPI_R_ERROR_SIGNING_HASH);
         capi_addlasterror();
         goto err;
@@ -1002,7 +1062,7 @@ static void capi_adderror(DWORD err)
     ERR_add_error_data(2, "Error code= 0x", errstr);
 }
 
-static char *wide_to_asc(LPWSTR wstr)
+static char *wide_to_asc(LPCWSTR wstr)
 {
     char *str;
     int len_0, sz;
@@ -1031,10 +1091,10 @@ static char *wide_to_asc(LPWSTR wstr)
 static int capi_get_provname(CAPI_CTX * ctx, LPSTR * pname, DWORD * ptype,
                              DWORD idx)
 {
-    LPSTR name;
     DWORD len, err;
+    LPTSTR name;
     CAPI_trace(ctx, "capi_get_provname, index=%d\n", idx);
-    if (!CryptEnumProvidersA(idx, NULL, 0, ptype, NULL, &len)) {
+    if (!CryptEnumProviders(idx, NULL, 0, ptype, NULL, &len)) {
         err = GetLastError();
         if (err == ERROR_NO_MORE_ITEMS)
             return 2;
@@ -1042,8 +1102,15 @@ static int capi_get_provname(CAPI_CTX * ctx, LPSTR * pname, DWORD * ptype,
         capi_adderror(err);
         return 0;
     }
-    name = OPENSSL_malloc(len);
-    if (!CryptEnumProvidersA(idx, NULL, 0, ptype, name, &len)) {
+    if (sizeof(TCHAR) != sizeof(char))
+        name = alloca(len);
+    else
+        name = OPENSSL_malloc(len);
+    if (name == NULL) {
+        CAPIerr(CAPI_F_CAPI_GET_PROVNAME, ERR_R_MALLOC_FAILURE);
+        return 0;
+    }
+    if (!CryptEnumProviders(idx, NULL, 0, ptype, name, &len)) {
         err = GetLastError();
         if (err == ERROR_NO_MORE_ITEMS)
             return 2;
@@ -1051,8 +1118,11 @@ static int capi_get_provname(CAPI_CTX * ctx, LPSTR * pname, DWORD * ptype,
         capi_adderror(err);
         return 0;
     }
-    *pname = name;
-    CAPI_trace(ctx, "capi_get_provname, returned name=%s, type=%d\n", name,
+    if (sizeof(TCHAR) != sizeof(char))
+        *pname = wide_to_asc((WCHAR *)name);
+    else
+        *pname = (char *)name;
+    CAPI_trace(ctx, "capi_get_provname, returned name=%s, type=%d\n", *pname,
                *ptype);
 
     return 1;
@@ -1083,10 +1153,26 @@ static int capi_list_containers(CAPI_CTX * ctx, BIO *out)
     HCRYPTPROV hprov;
     DWORD err, idx, flags, buflen = 0, clen;
     LPSTR cname;
+    LPTSTR cspname = NULL;
+
     CAPI_trace(ctx, "Listing containers CSP=%s, type = %d\n", ctx->cspname,
                ctx->csptype);
-    if (!CryptAcquireContextA
-        (&hprov, NULL, ctx->cspname, ctx->csptype, CRYPT_VERIFYCONTEXT)) {
+    if (ctx->cspname && sizeof(TCHAR) != sizeof(char)) {
+        if ((clen =
+             MultiByteToWideChar(CP_ACP, 0, ctx->cspname, -1, NULL, 0))) {
+            cspname = alloca(clen * sizeof(WCHAR));
+            MultiByteToWideChar(CP_ACP, 0, ctx->cspname, -1, (WCHAR *)cspname,
+                                clen);
+        }
+        if (!cspname) {
+            CAPIerr(CAPI_F_CAPI_LIST_CONTAINERS, ERR_R_MALLOC_FAILURE);
+            capi_addlasterror();
+            return 0;
+        }
+    } else
+        cspname = (TCHAR *)ctx->cspname;
+    if (!CryptAcquireContext
+        (&hprov, NULL, cspname, ctx->csptype, CRYPT_VERIFYCONTEXT)) {
         CAPIerr(CAPI_F_CAPI_LIST_CONTAINERS,
                 CAPI_R_CRYPTACQUIRECONTEXT_ERROR);
         capi_addlasterror();
@@ -1116,7 +1202,8 @@ static int capi_list_containers(CAPI_CTX * ctx, BIO *out)
             flags = CRYPT_FIRST;
         else
             flags = 0;
-        if (!CryptGetProvParam(hprov, PP_ENUMCONTAINERS, cname, &clen, flags)) {
+        if (!CryptGetProvParam
+            (hprov, PP_ENUMCONTAINERS, (BYTE *) cname, &clen, flags)) {
             err = GetLastError();
             if (err == ERROR_NO_MORE_ITEMS)
                 goto done;
@@ -1203,6 +1290,10 @@ char *capi_cert_get_fname(CAPI_CTX * ctx, PCCERT_CONTEXT cert)
         (cert, CERT_FRIENDLY_NAME_PROP_ID, NULL, &dlen))
         return NULL;
     wfname = OPENSSL_malloc(dlen);
+    if (wfname == NULL) {
+        CAPIerr(CAPI_F_CAPI_CERT_GET_FNAME, ERR_R_MALLOC_FAILURE);
+        return NULL;
+    }
     if (CertGetCertificateContextProperty
         (cert, CERT_FRIENDLY_NAME_PROP_ID, wfname, &dlen)) {
         char *fname = wide_to_asc(wfname);
@@ -1303,7 +1394,6 @@ int capi_list_certs(CAPI_CTX * ctx, BIO *out, char *id)
         CertFreeCertificateContext(cert);
     } else {
         for (idx = 0;; idx++) {
-            LPWSTR fname = NULL;
             cert = CertEnumCertificatesInStore(hstore, cert);
             if (!cert)
                 break;
@@ -1348,18 +1438,35 @@ static PCCERT_CONTEXT capi_find_cert(CAPI_CTX * ctx, const char *id,
     }
 }
 
-static CAPI_KEY *capi_get_key(CAPI_CTX * ctx, const char *contname,
-                              char *provname, DWORD ptype, DWORD keyspec)
+static CAPI_KEY *capi_get_key(CAPI_CTX * ctx, const TCHAR *contname,
+                              TCHAR *provname, DWORD ptype, DWORD keyspec)
 {
     CAPI_KEY *key;
     DWORD dwFlags = 0;
     key = OPENSSL_malloc(sizeof(CAPI_KEY));
-    CAPI_trace(ctx, "capi_get_key, contname=%s, provname=%s, type=%d\n",
-               contname, provname, ptype);
+    if (key == NULL) {
+        CAPIerr(CAPI_F_CAPI_GET_KEY, ERR_R_MALLOC_FAILURE);
+        capi_addlasterror();
+        goto err;
+    }
+    if (sizeof(TCHAR) == sizeof(char))
+        CAPI_trace(ctx, "capi_get_key, contname=%s, provname=%s, type=%d\n",
+                   contname, provname, ptype);
+    else if (ctx && ctx->debug_level >= CAPI_DBG_TRACE && ctx->debug_file) {
+        /* above 'if' is optimization to minimize malloc-ations */
+        char *_contname = wide_to_asc((WCHAR *)contname);
+        char *_provname = wide_to_asc((WCHAR *)provname);
+
+        CAPI_trace(ctx, "capi_get_key, contname=%s, provname=%s, type=%d\n",
+                   _contname, _provname, ptype);
+        if (_provname)
+            OPENSSL_free(_provname);
+        if (_contname)
+            OPENSSL_free(_contname);
+    }
     if (ctx->store_flags & CERT_SYSTEM_STORE_LOCAL_MACHINE)
         dwFlags = CRYPT_MACHINE_KEYSET;
-    if (!CryptAcquireContextA
-        (&key->hprov, contname, provname, ptype, dwFlags)) {
+    if (!CryptAcquireContext(&key->hprov, contname, provname, ptype, dwFlags)) {
         CAPIerr(CAPI_F_CAPI_GET_KEY, CAPI_R_CRYPTACQUIRECONTEXT_ERROR);
         capi_addlasterror();
         goto err;
@@ -1387,12 +1494,18 @@ static CAPI_KEY *capi_get_cert_key(CAPI_CTX * ctx, PCCERT_CONTEXT cert)
     pinfo = capi_get_prov_info(ctx, cert);
     if (!pinfo)
         goto err;
-    provname = wide_to_asc(pinfo->pwszProvName);
-    contname = wide_to_asc(pinfo->pwszContainerName);
-    if (!provname || !contname)
-        goto err;
-    key = capi_get_key(ctx, contname, provname,
-                       pinfo->dwProvType, pinfo->dwKeySpec);
+    if (sizeof(TCHAR) != sizeof(char))
+        key = capi_get_key(ctx, (TCHAR *)pinfo->pwszContainerName,
+                           (TCHAR *)pinfo->pwszProvName,
+                           pinfo->dwProvType, pinfo->dwKeySpec);
+    else {
+        provname = wide_to_asc(pinfo->pwszProvName);
+        contname = wide_to_asc(pinfo->pwszContainerName);
+        if (!provname || !contname)
+            goto err;
+        key = capi_get_key(ctx, (TCHAR *)contname, (TCHAR *)provname,
+                           pinfo->dwProvType, pinfo->dwKeySpec);
+    }
 
  err:
     if (pinfo)
@@ -1424,7 +1537,29 @@ CAPI_KEY *capi_find_key(CAPI_CTX * ctx, const char *id)
         break;
 
     case CAPI_LU_CONTNAME:
-        key = capi_get_key(ctx, id, ctx->cspname, ctx->csptype, ctx->keytype);
+        if (sizeof(TCHAR) != sizeof(char)) {
+            WCHAR *contname, *provname;
+            DWORD len;
+
+            if ((len = MultiByteToWideChar(CP_ACP, 0, id, -1, NULL, 0)) &&
+                (contname = alloca(len * sizeof(WCHAR)),
+                 MultiByteToWideChar(CP_ACP, 0, id, -1, contname, len)) &&
+                (len =
+                 MultiByteToWideChar(CP_ACP, 0, ctx->cspname, -1, NULL, 0))
+                && (provname =
+                    alloca(len * sizeof(WCHAR)), MultiByteToWideChar(CP_ACP,
+                                                                     0,
+                                                                     ctx->cspname,
+                                                                     -1,
+                                                                     provname,
+                                                                     len)))
+                key =
+                    capi_get_key(ctx, (TCHAR *)contname, (TCHAR *)provname,
+                                 ctx->csptype, ctx->keytype);
+        } else
+            key = capi_get_key(ctx, (TCHAR *)id,
+                               (TCHAR *)ctx->cspname,
+                               ctx->csptype, ctx->keytype);
         break;
     }
 
@@ -1489,8 +1624,19 @@ static int capi_ctx_set_provname(CAPI_CTX * ctx, LPSTR pname, DWORD type,
     CAPI_trace(ctx, "capi_ctx_set_provname, name=%s, type=%d\n", pname, type);
     if (check) {
         HCRYPTPROV hprov;
-        if (!CryptAcquireContextA(&hprov, NULL, pname, type,
-                                  CRYPT_VERIFYCONTEXT)) {
+        LPTSTR name = NULL;
+
+        if (sizeof(TCHAR) != sizeof(char)) {
+            DWORD len;
+            if ((len = MultiByteToWideChar(CP_ACP, 0, pname, -1, NULL, 0))) {
+                name = alloca(len * sizeof(WCHAR));
+                MultiByteToWideChar(CP_ACP, 0, pname, -1, (WCHAR *)name, len);
+            }
+        } else
+            name = (TCHAR *)pname;
+
+        if (!name || !CryptAcquireContext(&hprov, NULL, name, type,
+                                          CRYPT_VERIFYCONTEXT)) {
             CAPIerr(CAPI_F_CAPI_CTX_SET_PROVNAME,
                     CAPI_R_CRYPTACQUIRECONTEXT_ERROR);
             capi_addlasterror();
@@ -1641,7 +1787,7 @@ static int cert_select_simple(ENGINE *e, SSL *ssl, STACK_OF(X509) *certs)
     return 0;
 }
 
-#  ifdef OPENSSL_CAPIENG_DIALOG
+# ifdef OPENSSL_CAPIENG_DIALOG
 
 /*
  * More complex cert selection function, using standard function
@@ -1653,14 +1799,14 @@ static int cert_select_simple(ENGINE *e, SSL *ssl, STACK_OF(X509) *certs)
  * versions of headers.
  */
 
-#   ifndef CRYPTUI_SELECT_LOCATION_COLUMN
-#    define CRYPTUI_SELECT_LOCATION_COLUMN                   0x000000010
-#    define CRYPTUI_SELECT_INTENDEDUSE_COLUMN                0x000000004
-#   endif
+#  ifndef CRYPTUI_SELECT_LOCATION_COLUMN
+#   define CRYPTUI_SELECT_LOCATION_COLUMN                   0x000000010
+#   define CRYPTUI_SELECT_INTENDEDUSE_COLUMN                0x000000004
+#  endif
 
-#   define dlg_title L"OpenSSL Application SSL Client Certificate Selection"
-#   define dlg_prompt L"Select a certificate to use for authentication"
-#   define dlg_columns      CRYPTUI_SELECT_LOCATION_COLUMN \
+#  define dlg_title L"OpenSSL Application SSL Client Certificate Selection"
+#  define dlg_prompt L"Select a certificate to use for authentication"
+#  define dlg_columns      CRYPTUI_SELECT_LOCATION_COLUMN \
                         |CRYPTUI_SELECT_INTENDEDUSE_COLUMN
 
 static int cert_select_dialog(ENGINE *e, SSL *ssl, STACK_OF(X509) *certs)
@@ -1725,12 +1871,13 @@ static int cert_select_dialog(ENGINE *e, SSL *ssl, STACK_OF(X509) *certs)
     return idx;
 
 }
-#  endif
-
 # endif
-#else                           /* !WIN32 */
+
+#else                           /* !__COMPILE_CAPIENG */
 # include <openssl/engine.h>
 # ifndef OPENSSL_NO_DYNAMIC_ENGINE
+OPENSSL_EXPORT
+    int bind_engine(ENGINE *e, const char *id, const dynamic_fns *fns);
 OPENSSL_EXPORT
     int bind_engine(ENGINE *e, const char *id, const dynamic_fns *fns)
 {
@@ -1738,5 +1885,9 @@ OPENSSL_EXPORT
 }
 
 IMPLEMENT_DYNAMIC_CHECK_FN()
+# else
+void ENGINE_load_capi(void)
+{
+}
 # endif
 #endif

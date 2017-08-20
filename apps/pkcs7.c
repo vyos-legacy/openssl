@@ -88,11 +88,10 @@ int MAIN(int argc, char **argv)
     BIO *in = NULL, *out = NULL;
     int informat, outformat;
     char *infile, *outfile, *prog;
-    int print_certs = 0, text = 0, noout = 0;
+    int print_certs = 0, text = 0, noout = 0, p7_print = 0;
     int ret = 1;
-#ifndef OPENSSL_NO_ENGINE
     char *engine = NULL;
-#endif
+    ENGINE *e = NULL;
 
     apps_startup();
 
@@ -132,6 +131,8 @@ int MAIN(int argc, char **argv)
             noout = 1;
         else if (strcmp(*argv, "-text") == 0)
             text = 1;
+        else if (strcmp(*argv, "-print") == 0)
+            p7_print = 1;
         else if (strcmp(*argv, "-print_certs") == 0)
             print_certs = 1;
 #ifndef OPENSSL_NO_ENGINE
@@ -173,9 +174,7 @@ int MAIN(int argc, char **argv)
 
     ERR_load_crypto_strings();
 
-#ifndef OPENSSL_NO_ENGINE
-    setup_engine(bio_err, engine, 0);
-#endif
+    e = setup_engine(bio_err, engine, 0);
 
     in = BIO_new(BIO_s_file());
     out = BIO_new(BIO_s_file());
@@ -187,11 +186,11 @@ int MAIN(int argc, char **argv)
     if (infile == NULL)
         BIO_set_fp(in, stdin, BIO_NOCLOSE);
     else {
-        if (BIO_read_filename(in, infile) <= 0)
-            if (in == NULL) {
-                perror(infile);
-                goto end;
-            }
+        if (BIO_read_filename(in, infile) <= 0) {
+            BIO_printf(bio_err, "unable to load input file\n");
+            ERR_print_errors(bio_err);
+            goto end;
+        }
     }
 
     if (informat == FORMAT_ASN1)
@@ -223,6 +222,9 @@ int MAIN(int argc, char **argv)
         }
     }
 
+    if (p7_print)
+        PKCS7_print_ctx(out, p7, 0, NULL);
+
     if (print_certs) {
         STACK_OF(X509) *certs = NULL;
         STACK_OF(X509_CRL) *crls = NULL;
@@ -230,12 +232,16 @@ int MAIN(int argc, char **argv)
         i = OBJ_obj2nid(p7->type);
         switch (i) {
         case NID_pkcs7_signed:
-            certs = p7->d.sign->cert;
-            crls = p7->d.sign->crl;
+            if (p7->d.sign != NULL) {
+                certs = p7->d.sign->cert;
+                crls = p7->d.sign->crl;
+            }
             break;
         case NID_pkcs7_signedAndEnveloped:
-            certs = p7->d.signed_and_enveloped->cert;
-            crls = p7->d.signed_and_enveloped->crl;
+            if (p7->d.signed_and_enveloped != NULL) {
+                certs = p7->d.signed_and_enveloped->cert;
+                crls = p7->d.signed_and_enveloped->crl;
+            }
             break;
         default:
             break;
@@ -294,6 +300,7 @@ int MAIN(int argc, char **argv)
  end:
     if (p7 != NULL)
         PKCS7_free(p7);
+    release_engine(e);
     if (in != NULL)
         BIO_free(in);
     if (out != NULL)

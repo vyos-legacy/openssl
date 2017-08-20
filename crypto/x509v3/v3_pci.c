@@ -1,9 +1,9 @@
-/* v3_pci.c -*- mode:C; c-file-style: "eay" -*- */
+/* v3_pci.c */
 /*
  * Contributed to the OpenSSL Project 2004 by Richard Levitte
  * (richard@levitte.org)
  */
-/* Copyright (c) 2004 Kungliga Tekniska Högskolan
+/* Copyright (c) 2004 Kungliga Tekniska HÃ¶gskolan
  * (Royal Institute of Technology, Stockholm, Sweden).
  * All rights reserved.
  *
@@ -82,7 +82,7 @@ static int process_pci_value(CONF_VALUE *val,
     if (strcmp(val->name, "language") == 0) {
         if (*language) {
             X509V3err(X509V3_F_PROCESS_PCI_VALUE,
-                      X509V3_R_POLICY_LANGUAGE_ALREADTY_DEFINED);
+                      X509V3_R_POLICY_LANGUAGE_ALREADY_DEFINED);
             X509V3_conf_err(val);
             return 0;
         }
@@ -95,7 +95,7 @@ static int process_pci_value(CONF_VALUE *val,
     } else if (strcmp(val->name, "pathlen") == 0) {
         if (*pathlen) {
             X509V3err(X509V3_F_PROCESS_PCI_VALUE,
-                      X509V3_R_POLICY_PATH_LENGTH_ALREADTY_DEFINED);
+                      X509V3_R_POLICY_PATH_LENGTH_ALREADY_DEFINED);
             X509V3_conf_err(val);
             return 0;
         }

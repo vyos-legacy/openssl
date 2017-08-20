@@ -7,23 +7,24 @@ msgid ""
 msgstr ""
 "Project-Id-Version: openssl\n"
 "Report-Msgid-Bugs-To: openssl@packages.debian.org\n"
-"POT-Creation-Date: 2008-01-16 21:40+0100\n"
+"POT-Creation-Date: 2010-12-13 20:31+0100\n"
 "PO-Revision-Date: 2008-04-10 20:36+0100\n"
 "Last-Translator: Carlos Lisboa <carloslisboa@gmail.com>\n"
 "Language-Team: Portuguese <traduz@debianpt.org>\n"
+"Language: pt\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
 #. Type: string
 #. Description
-#: ../libssl0.9.8.templates:1001
+#: ../libssl1.0.0.templates:1001
 msgid "Services to restart to make them use the new libraries:"
 msgstr "Serviços a reiniciar para que usem as novas bibliotecas:"
 
 #. Type: string
 #. Description
-#: ../libssl0.9.8.templates:1001
+#: ../libssl1.0.0.templates:1001
 msgid ""
 "This release of OpenSSL fixes some security issues. Services will not use "
 "these fixes until they are restarted. Please note that restarting the SSH "
@@ -36,7 +37,7 @@ msgstr ""
 
 #. Type: string
 #. Description
-#: ../libssl0.9.8.templates:1001
+#: ../libssl1.0.0.templates:1001
 msgid ""
 "Please check the list of detected services that need to be restarted and "
 "correct it, if needed. The services names must be identical to the "
@@ -50,7 +51,7 @@ msgstr ""
 
 #. Type: string
 #. Description
-#: ../libssl0.9.8.templates:1001
+#: ../libssl1.0.0.templates:1001
 msgid ""
 "Any service that later fails unexpectedly after this upgrade should be "
 "restarted. It is recommended to reboot this host to avoid any SSL-related "
@@ -62,7 +63,7 @@ msgstr ""
 
 #. Type: error
 #. Description
-#: ../libssl0.9.8.templates:2001
+#: ../libssl1.0.0.templates:2001
 msgid "Failure restarting some services for OpenSSL upgrade"
 msgstr "Falha ao reiniciar alguns serviços para a actualização do OpenSSL"
 
@@ -70,17 +71,17 @@ msgstr "Falha ao reiniciar alguns serviços para a actualização do OpenSSL"
 #. Description
 #. This paragraph is followed by a (non translatable) paragraph containing
 #. a list of services that could not be restarted
-#: ../libssl0.9.8.templates:2001
+#: ../libssl1.0.0.templates:2001
 msgid ""
 "The following services could not be restarted for the OpenSSL library "
 "upgrade:"
 msgstr ""
-"Os seguintes serviços não poderam ser reiniciados para a actualização "
-"da biblioteca OpenSSL:"
+"Os seguintes serviços não poderam ser reiniciados para a actualização da "
+"biblioteca OpenSSL:"
 
 #. Type: error
 #. Description
-#: ../libssl0.9.8.templates:2001
+#: ../libssl1.0.0.templates:2001
 msgid ""
 "You will need to start these manually by running '/etc/init.d/<service> "
 "start'."

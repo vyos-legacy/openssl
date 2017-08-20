@@ -65,11 +65,11 @@
 # include "apps.h"
 # include <openssl/bio.h>
 # include <openssl/err.h>
+# include <openssl/dsa.h>
 # include <openssl/evp.h>
 # include <openssl/x509.h>
 # include <openssl/pem.h>
 # include <openssl/bn.h>
-# include <openssl/dsa.h>
 
 # undef PROG
 # define PROG    dsa_main
@@ -106,12 +106,12 @@ int MAIN(int argc, char **argv)
     int informat, outformat, text = 0, noout = 0;
     int pubin = 0, pubout = 0;
     char *infile, *outfile, *prog;
-# ifndef OPENSSL_NO_ENGINE
     char *engine;
-# endif
     char *passargin = NULL, *passargout = NULL;
     char *passin = NULL, *passout = NULL;
     int modulus = 0;
+
+    int pvk_encr = 2;
 
     apps_startup();
 
@@ -122,9 +122,7 @@ int MAIN(int argc, char **argv)
     if (!load_config(bio_err, NULL))
         goto end;
 
-# ifndef OPENSSL_NO_ENGINE
     engine = NULL;
-# endif
     infile = NULL;
     outfile = NULL;
     informat = FORMAT_PEM;
@@ -166,6 +164,12 @@ int MAIN(int argc, char **argv)
             engine = *(++argv);
         }
 # endif
+        else if (strcmp(*argv, "-pvk-strong") == 0)
+            pvk_encr = 2;
+        else if (strcmp(*argv, "-pvk-weak") == 0)
+            pvk_encr = 1;
+        else if (strcmp(*argv, "-pvk-none") == 0)
+            pvk_encr = 0;
         else if (strcmp(*argv, "-noout") == 0)
             noout = 1;
         else if (strcmp(*argv, "-text") == 0)
@@ -231,24 +235,34 @@ int MAIN(int argc, char **argv)
 
     ERR_load_crypto_strings();
 
-# ifndef OPENSSL_NO_ENGINE
     e = setup_engine(bio_err, engine, 0);
-# endif
 
     if (!app_passwd(bio_err, passargin, passargout, &passin, &passout)) {
         BIO_printf(bio_err, "Error getting passwords\n");
         goto end;
     }
 
+    in = BIO_new(BIO_s_file());
     out = BIO_new(BIO_s_file());
-    if (out == NULL) {
+    if ((in == NULL) || (out == NULL)) {
         ERR_print_errors(bio_err);
         goto end;
     }
 
+    if (infile == NULL)
+        BIO_set_fp(in, stdin, BIO_NOCLOSE);
+    else {
+        if (BIO_read_filename(in, infile) <= 0) {
+            perror(infile);
+            goto end;
+        }
+    }
+
     BIO_printf(bio_err, "read DSA key\n");
+
     {
         EVP_PKEY *pkey;
+
         if (pubin)
             pkey = load_pubkey(bio_err, infile, informat, 1,
                                passin, e, "Public Key");
@@ -256,9 +270,10 @@ int MAIN(int argc, char **argv)
             pkey = load_key(bio_err, infile, informat, 1,
                             passin, e, "Private Key");
 
-        if (pkey != NULL)
-            dsa = pkey == NULL ? NULL : EVP_PKEY_get1_DSA(pkey);
-        EVP_PKEY_free(pkey);
+        if (pkey) {
+            dsa = EVP_PKEY_get1_DSA(pkey);
+            EVP_PKEY_free(pkey);
+        }
     }
     if (dsa == NULL) {
         BIO_printf(bio_err, "unable to load Key\n");
@@ -308,11 +323,24 @@ int MAIN(int argc, char **argv)
         else
             i = PEM_write_bio_DSAPrivateKey(out, dsa, enc,
                                             NULL, 0, NULL, passout);
+# if !defined(OPENSSL_NO_RSA) && !defined(OPENSSL_NO_RC4)
+    } else if (outformat == FORMAT_MSBLOB || outformat == FORMAT_PVK) {
+        EVP_PKEY *pk;
+        pk = EVP_PKEY_new();
+        EVP_PKEY_set1_DSA(pk, dsa);
+        if (outformat == FORMAT_PVK)
+            i = i2b_PVK_bio(out, pk, pvk_encr, 0, passout);
+        else if (pubin || pubout)
+            i = i2b_PublicKey_bio(out, pk);
+        else
+            i = i2b_PrivateKey_bio(out, pk);
+        EVP_PKEY_free(pk);
+# endif
     } else {
         BIO_printf(bio_err, "bad output format specified for outfile\n");
         goto end;
     }
-    if (!i) {
+    if (i <= 0) {
         BIO_printf(bio_err, "unable to write private key\n");
         ERR_print_errors(bio_err);
     } else
@@ -324,6 +352,7 @@ int MAIN(int argc, char **argv)
         BIO_free_all(out);
     if (dsa != NULL)
         DSA_free(dsa);
+    release_engine(e);
     if (passin)
         OPENSSL_free(passin);
     if (passout)
@@ -331,4 +360,10 @@ int MAIN(int argc, char **argv)
     apps_shutdown();
     OPENSSL_EXIT(ret);
 }
+#else                           /* !OPENSSL_NO_DSA */
+
+# if PEDANTIC
+static void *dummy = &dummy;
+# endif
+
 #endif

@@ -67,7 +67,6 @@ static STACK_OF(ASN1_STRING_TABLE) *stable = NULL;
 static void st_free(ASN1_STRING_TABLE *tbl);
 static int sk_table_cmp(const ASN1_STRING_TABLE *const *a,
                         const ASN1_STRING_TABLE *const *b);
-static int table_cmp(const void *a, const void *b);
 
 /*
  * This is the global mask for the mbstring functions: this is use to mask
@@ -171,7 +170,7 @@ ASN1_STRING *ASN1_STRING_set_by_NID(ASN1_STRING **out,
 
 /* This table must be kept in NID order */
 
-static ASN1_STRING_TABLE tbl_standard[] = {
+static const ASN1_STRING_TABLE tbl_standard[] = {
     {NID_commonName, 1, ub_common_name, DIRSTRING_TYPE, 0},
     {NID_countryName, 2, 2, B_ASN1_PRINTABLESTRING, STABLE_NO_MASK},
     {NID_localityName, 1, ub_locality_name, DIRSTRING_TYPE, 0},
@@ -193,7 +192,8 @@ static ASN1_STRING_TABLE tbl_standard[] = {
     {NID_name, 1, ub_name, DIRSTRING_TYPE, 0},
     {NID_dnQualifier, -1, -1, B_ASN1_PRINTABLESTRING, STABLE_NO_MASK},
     {NID_domainComponent, 1, -1, B_ASN1_IA5STRING, STABLE_NO_MASK},
-    {NID_ms_csp_name, -1, -1, B_ASN1_BMPSTRING, STABLE_NO_MASK}
+    {NID_ms_csp_name, -1, -1, B_ASN1_BMPSTRING, STABLE_NO_MASK},
+    {NID_jurisdictionCountryName, 2, 2, B_ASN1_PRINTABLESTRING, STABLE_NO_MASK}
 };
 
 static int sk_table_cmp(const ASN1_STRING_TABLE *const *a,
@@ -202,11 +202,14 @@ static int sk_table_cmp(const ASN1_STRING_TABLE *const *a,
     return (*a)->nid - (*b)->nid;
 }
 
-static int table_cmp(const void *a, const void *b)
+DECLARE_OBJ_BSEARCH_CMP_FN(ASN1_STRING_TABLE, ASN1_STRING_TABLE, table);
+
+static int table_cmp(const ASN1_STRING_TABLE *a, const ASN1_STRING_TABLE *b)
 {
-    const ASN1_STRING_TABLE *sa = a, *sb = b;
-    return sa->nid - sb->nid;
+    return a->nid - b->nid;
 }
+
+IMPLEMENT_OBJ_BSEARCH_CMP_FN(ASN1_STRING_TABLE, ASN1_STRING_TABLE, table);
 
 ASN1_STRING_TABLE *ASN1_STRING_TABLE_get(int nid)
 {
@@ -214,12 +217,9 @@ ASN1_STRING_TABLE *ASN1_STRING_TABLE_get(int nid)
     ASN1_STRING_TABLE *ttmp;
     ASN1_STRING_TABLE fnd;
     fnd.nid = nid;
-    ttmp = (ASN1_STRING_TABLE *)OBJ_bsearch((char *)&fnd,
-                                            (char *)tbl_standard,
-                                            sizeof(tbl_standard) /
-                                            sizeof(ASN1_STRING_TABLE),
-                                            sizeof(ASN1_STRING_TABLE),
-                                            table_cmp);
+    ttmp = OBJ_bsearch_table(&fnd, tbl_standard,
+                             sizeof(tbl_standard) /
+                             sizeof(ASN1_STRING_TABLE));
     if (ttmp)
         return ttmp;
     if (!stable)
@@ -251,6 +251,7 @@ int ASN1_STRING_TABLE_add(int nid,
         }
         tmp->flags = flags | STABLE_FLAGS_MALLOC;
         tmp->nid = nid;
+        tmp->minsize = tmp->maxsize = -1;
         new_nid = 1;
     } else
         tmp->flags = (tmp->flags & STABLE_FLAGS_MALLOC) | flags;

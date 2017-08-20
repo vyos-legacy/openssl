@@ -12,10 +12,15 @@
 # Top level excludes
 /Makefile.bak
 /Makefile
+/MINFO
 /*.a
 /include
 /*.pc
 /rehash.time
+/inc.*
+/makefile.*
+/out.*
+/tmp.*
 
 # Most *.c files under test/ are symlinks
 /test/*.c
@@ -26,6 +31,7 @@
 !/test/igetest.c
 !/test/r160test.c
 !/test/fips_algvs.c
+!/test/ssltestlib.c
 
 /test/*.ss
 /test/*.srl
@@ -92,10 +98,16 @@ crypto/sha/asm/sha512-sse2.asm
 lib
 Makefile.save
 *.bak
+tags
+TAGS
 
 # Windows
+/tmp32
+/tmp32.dbg
 /tmp32dll
 /tmp32dll.dbg
+/out32
+/out32.dbg
 /out32dll
 /out32dll.dbg
 /inc32

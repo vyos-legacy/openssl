@@ -4,7 +4,7 @@
 #include <openssl/sha.h>
 #include <openssl/err.h>
 #include <memory.h>
-#include <assert.h>
+#include <string.h>
 
 /*
  * In the definition, (xa, xb, xc, xd) are Alice's (x1, x2, x3, x4) or
@@ -116,6 +116,8 @@ JPAKE_CTX *JPAKE_CTX_new(const char *name, const char *peer_name,
                          const BIGNUM *secret)
 {
     JPAKE_CTX *ctx = OPENSSL_malloc(sizeof *ctx);
+    if (ctx == NULL)
+        return NULL;
 
     JPAKE_CTX_init(ctx, name, peer_name, p, g, q, secret);
 
@@ -132,7 +134,7 @@ static void hashlength(SHA_CTX *sha, size_t l)
 {
     unsigned char b[2];
 
-    assert(l <= 0xffff);
+    OPENSSL_assert(l <= 0xffff);
     b[0] = l >> 8;
     b[1] = l & 0xff;
     SHA1_Update(sha, b, 2);
@@ -151,6 +153,8 @@ static void hashbn(SHA_CTX *sha, const BIGNUM *bn)
     size_t l = BN_num_bytes(bn);
     unsigned char *bin = OPENSSL_malloc(l);
 
+    if (bin == NULL)
+        return;
     hashlength(sha, l);
     BN_bn2bin(bn, bin);
     SHA1_Update(sha, bin, l);
@@ -170,7 +174,7 @@ static void zkp_hash(BIGNUM *h, const BIGNUM *zkpg, const JPAKE_STEP_PART *p,
      */
     SHA1_Init(&sha);
     hashbn(&sha, zkpg);
-    assert(!BN_is_zero(p->zkpx.gr));
+    OPENSSL_assert(!BN_is_zero(p->zkpx.gr));
     hashbn(&sha, p->zkpx.gr);
     hashbn(&sha, p->gx);
     hashstring(&sha, proof_name);
@@ -219,6 +223,9 @@ static int verify_zkp(const JPAKE_STEP_PART *p, const BIGNUM *zkpg,
     BIGNUM *t3 = BN_new();
     int ret = 0;
 
+    if (h == NULL || t1 == NULL || t2 == NULL || t3 == NULL)
+        goto end;
+
     zkp_hash(h, zkpg, p, ctx->p.peer_name);
 
     /* t1 = g^b */
@@ -234,6 +241,7 @@ static int verify_zkp(const JPAKE_STEP_PART *p, const BIGNUM *zkpg,
     else
         JPAKEerr(JPAKE_F_VERIFY_ZKP, JPAKE_R_ZKP_VERIFY_FAILED);
 
+end:
     /* cleanup */
     BN_free(t3);
     BN_free(t2);

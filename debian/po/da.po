@@ -9,10 +9,11 @@ msgid ""
 msgstr ""
 "Project-Id-Version: openssl\n"
 "Report-Msgid-Bugs-To: openssl@packages.debian.org\n"
-"POT-Creation-Date: 2008-01-16 21:40+0100\n"
+"POT-Creation-Date: 2010-12-13 20:31+0100\n"
 "PO-Revision-Date: 2010-10-07 05:26+0100\n"
 "Last-Translator: Joe Hansen <joedalton2@yahoo.dk>\n"
 "Language-Team: Danish <debian-l10n-danish@lists.debian.org> \n"
+"Language: \n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -20,7 +21,7 @@ msgstr ""
 
 #. Type: string
 #. Description
-#: ../libssl0.9.8.templates:1001
+#: ../libssl1.0.0.templates:1001
 msgid "Services to restart to make them use the new libraries:"
 msgstr ""
 "Tjenester der skal genstartes for at få dem til at benytte de nye "
@@ -28,19 +29,19 @@ msgstr ""
 
 #. Type: string
 #. Description
-#: ../libssl0.9.8.templates:1001
+#: ../libssl1.0.0.templates:1001
 msgid ""
 "This release of OpenSSL fixes some security issues. Services will not use "
 "these fixes until they are restarted. Please note that restarting the SSH "
 "server (sshd) should not affect any existing connections."
 msgstr ""
-"Denne version af OpenSSL retter nogle sikkerhedsproblemer. Tjenester vil ikke "
-"benytte disse rettelser, før de er blevet genstartet. Bemærk at det ikke vil "
-"påvirke eksisterende forbindelser at genstarte SSH-serveren (sshd)."
+"Denne version af OpenSSL retter nogle sikkerhedsproblemer. Tjenester vil "
+"ikke benytte disse rettelser, før de er blevet genstartet. Bemærk at det "
+"ikke vil påvirke eksisterende forbindelser at genstarte SSH-serveren (sshd)."
 
 #. Type: string
 #. Description
-#: ../libssl0.9.8.templates:1001
+#: ../libssl1.0.0.templates:1001
 msgid ""
 "Please check the list of detected services that need to be restarted and "
 "correct it, if needed. The services names must be identical to the "
@@ -48,13 +49,13 @@ msgid ""
 "services will be restarted if the list is empty."
 msgstr ""
 "Tjek listen over fundne tjenester, som skal genstartes, og ret den om "
-"nødvendigt. Tjenestenavnene skal være identiske med initialiseringsskriptenes "
-"navne i /etc/init.d, og være adskilt med mellemrum. Hvis listen er tom, vil "
-"ingen tjenester blive genstartet."
+"nødvendigt. Tjenestenavnene skal være identiske med "
+"initialiseringsskriptenes navne i /etc/init.d, og være adskilt med "
+"mellemrum. Hvis listen er tom, vil ingen tjenester blive genstartet."
 
 #. Type: string
 #. Description
-#: ../libssl0.9.8.templates:1001
+#: ../libssl1.0.0.templates:1001
 msgid ""
 "Any service that later fails unexpectedly after this upgrade should be "
 "restarted. It is recommended to reboot this host to avoid any SSL-related "
@@ -66,7 +67,7 @@ msgstr ""
 
 #. Type: error
 #. Description
-#: ../libssl0.9.8.templates:2001
+#: ../libssl1.0.0.templates:2001
 msgid "Failure restarting some services for OpenSSL upgrade"
 msgstr "Fejl ved genstart af nogle tjenester for OpenSSl-opgradering"
 
@@ -74,21 +75,19 @@ msgstr "Fejl ved genstart af nogle tjenester for OpenSSl-opgradering"
 #. Description
 #. This paragraph is followed by a (non translatable) paragraph containing
 #. a list of services that could not be restarted
-#: ../libssl0.9.8.templates:2001
+#: ../libssl1.0.0.templates:2001
 msgid ""
 "The following services could not be restarted for the OpenSSL library "
 "upgrade:"
 msgstr ""
-"De følgende tjenester kunne ikke genstartes for "
-"OpenSSL-biblioteksopgraderingen:"
+"De følgende tjenester kunne ikke genstartes for OpenSSL-"
+"biblioteksopgraderingen:"
 
 #. Type: error
 #. Description
-#: ../libssl0.9.8.templates:2001
+#: ../libssl1.0.0.templates:2001
 msgid ""
 "You will need to start these manually by running '/etc/init.d/<service> "
 "start'."
 msgstr ""
-"Du skal genstarte disse manuelt ved at køre '/etc/init.d/<tjeneste> "
-"start'."
-
+"Du skal genstarte disse manuelt ved at køre '/etc/init.d/<tjeneste> start'."

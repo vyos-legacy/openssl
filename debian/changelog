@@ -1,3 +1,10 @@
+openssl (1.0.2l+vyos1+helium9) unstable; urgency=low
+
+  [Yuya Kusakabe]
+  * Import 1.0.2l
+
+ -- Yuya Kusakabe <yuya.kusakabe@gmail.com>  Mon, 21 Aug 2017 08:12:14 +0900
+
 openssl (0.9.8zf+vyos1+helium8) unstable; urgency=low
 
   [ Alex Harpin ]

@@ -73,7 +73,7 @@ int i2d_ASN1_OBJECT(ASN1_OBJECT *a, unsigned char **pp)
         return (0);
 
     objsize = ASN1_object_size(0, a->length, V_ASN1_OBJECT);
-    if (pp == NULL)
+    if (pp == NULL || objsize == -1)
         return objsize;
 
     p = *pp;
@@ -174,8 +174,12 @@ int a2d_ASN1_OBJECT(unsigned char *out, int olen, const char *buf, int num)
                 if (!tmp)
                     goto err;
             }
-            while (blsize--)
-                tmp[i++] = (unsigned char)BN_div_word(bl, 0x80L);
+            while (blsize--) {
+                BN_ULONG t = BN_div_word(bl, 0x80L);
+                if (t == (BN_ULONG)-1)
+                    goto err;
+                tmp[i++] = (unsigned char)t;
+            }
         } else {
 
             for (;;) {
@@ -262,8 +266,6 @@ ASN1_OBJECT *d2i_ASN1_OBJECT(ASN1_OBJECT **a, const unsigned char **pp,
     return ret;
  err:
     ASN1err(ASN1_F_D2I_ASN1_OBJECT, i);
-    if ((ret != NULL) && ((a == NULL) || (*a != ret)))
-        ASN1_OBJECT_free(ret);
     return (NULL);
 }
 
@@ -272,6 +274,7 @@ ASN1_OBJECT *c2i_ASN1_OBJECT(ASN1_OBJECT **a, const unsigned char **pp,
 {
     ASN1_OBJECT *ret = NULL;
     const unsigned char *p;
+    unsigned char *data;
     int i, length;
 
     /*
@@ -305,17 +308,24 @@ ASN1_OBJECT *c2i_ASN1_OBJECT(ASN1_OBJECT **a, const unsigned char **pp,
         ret = (*a);
 
     p = *pp;
-    if ((ret->data == NULL) || (ret->length < length)) {
-        if (ret->data != NULL)
-            OPENSSL_free(ret->data);
-        ret->data = (unsigned char *)OPENSSL_malloc(length);
-        ret->flags |= ASN1_OBJECT_FLAG_DYNAMIC_DATA;
-        if (ret->data == NULL) {
+    /* detach data from object */
+    data = (unsigned char *)ret->data;
+    ret->data = NULL;
+    /* once detached we can change it */
+    if ((data == NULL) || (ret->length < length)) {
+        ret->length = 0;
+        if (data != NULL)
+            OPENSSL_free(data);
+        data = (unsigned char *)OPENSSL_malloc(length);
+        if (data == NULL) {
             i = ERR_R_MALLOC_FAILURE;
             goto err;
         }
+        ret->flags |= ASN1_OBJECT_FLAG_DYNAMIC_DATA;
     }
-    memcpy(ret->data, p, length);
+    memcpy(data, p, length);
+    /* reattach data to object, after which it remains const */
+    ret->data = data;
     ret->length = length;
     ret->sn = NULL;
     ret->ln = NULL;
@@ -368,7 +378,7 @@ void ASN1_OBJECT_free(ASN1_OBJECT *a)
     }
     if (a->flags & ASN1_OBJECT_FLAG_DYNAMIC_DATA) {
         if (a->data != NULL)
-            OPENSSL_free(a->data);
+            OPENSSL_free((void *)a->data);
         a->data = NULL;
         a->length = 0;
     }

@@ -1,4 +1,4 @@
-/* crypto/evp/e_seed.c -*- mode:C; c-file-style: "eay" -*- */
+/* crypto/evp/e_seed.c */
 /* ====================================================================
  * Copyright (c) 2007 The OpenSSL Project.  All rights reserved.
  *
@@ -54,11 +54,11 @@
  */
 
 #include <openssl/opensslconf.h>
-#include <openssl/evp.h>
-#include <openssl/err.h>
-#include <string.h>
-#include <assert.h>
 #ifndef OPENSSL_NO_SEED
+# include <openssl/evp.h>
+# include <openssl/err.h>
+# include <string.h>
+# include <assert.h>
 # include <openssl/seed.h>
 # include "evp_locl.h"
 
@@ -70,7 +70,8 @@ typedef struct {
 } EVP_SEED_KEY;
 
 IMPLEMENT_BLOCK_CIPHER(seed, ks, SEED, EVP_SEED_KEY, NID_seed,
-                       16, 16, 16, 128, 0, seed_init_key, 0, 0, 0, 0)
+                       16, 16, 16, 128, EVP_CIPH_FLAG_DEFAULT_ASN1,
+                       seed_init_key, 0, 0, 0, 0)
 
 static int seed_init_key(EVP_CIPHER_CTX *ctx, const unsigned char *key,
                          const unsigned char *iv, int enc)

@@ -1,4 +1,4 @@
-/* crypto/ui/ui_openssl.c -*- mode:C; c-file-style: "eay" -*- */
+/* crypto/ui/ui_openssl.c */
 /*
  * Written by Richard Levitte (richard@levitte.org) and others for the
  * OpenSSL project 2001.
@@ -124,7 +124,15 @@
  * sigaction and fileno included. -pedantic would be more appropriate for the
  * intended purposes, but we can't prevent users from adding -ansi.
  */
-#define _POSIX_C_SOURCE 1
+#if defined(OPENSSL_SYSNAME_VXWORKS)
+# include <sys/types.h>
+#endif
+
+#if !defined(_POSIX_C_SOURCE) && defined(OPENSSL_SYS_VMS)
+# ifndef _POSIX_C_SOURCE
+#  define _POSIX_C_SOURCE 2
+# endif
+#endif
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -177,43 +185,37 @@
 
 /*
  * There are 5 types of terminal interface supported, TERMIO, TERMIOS, VMS,
- * MSDOS and SGTTY
+ * MSDOS and SGTTY.
+ *
+ * If someone defines one of the macros TERMIO, TERMIOS or SGTTY, it will
+ * remain respected.  Otherwise, we default to TERMIOS except for a few
+ * systems that require something different.
+ *
+ * Note: we do not use SGTTY unless it's defined by the configuration.  We
+ * may eventually opt to remove it's use entirely.
  */
 
-#if defined(__sgi) && !defined(TERMIOS)
-# define TERMIOS
-# undef  TERMIO
-# undef  SGTTY
-#endif
+#if !defined(TERMIOS) && !defined(TERMIO) && !defined(SGTTY)
 
-#if defined(linux) && !defined(TERMIO)
-# undef  TERMIOS
-# define TERMIO
-# undef  SGTTY
-#endif
+# if defined(_LIBC)
+#  undef  TERMIOS
+#  define TERMIO
+#  undef  SGTTY
+/*
+ * We know that VMS, MSDOS, VXWORKS, NETWARE use entirely other mechanisms.
+ * MAC_OS_GUSI_SOURCE should probably go away, but that needs to be confirmed.
+ */
+# elif !defined(OPENSSL_SYS_VMS) \
+	&& !defined(OPENSSL_SYS_MSDOS) \
+	&& !defined(OPENSSL_SYS_MACINTOSH_CLASSIC) \
+	&& !defined(MAC_OS_GUSI_SOURCE)	\
+	&& !defined(OPENSSL_SYS_VXWORKS) \
+	&& !defined(OPENSSL_SYS_NETWARE)
+#  define TERMIOS
+#  undef  TERMIO
+#  undef  SGTTY
+# endif
 
-#ifdef _LIBC
-# undef  TERMIOS
-# define TERMIO
-# undef  SGTTY
-#endif
-
-#if !defined(TERMIO) && !defined(TERMIOS) && !defined(OPENSSL_SYS_VMS) && !defined(OPENSSL_SYS_MSDOS) && !defined(OPENSSL_SYS_MACINTOSH_CLASSIC) && !defined(MAC_OS_GUSI_SOURCE)
-# undef  TERMIOS
-# undef  TERMIO
-# define SGTTY
-#endif
-
-#if defined(OPENSSL_SYS_VXWORKS)
-# undef TERMIOS
-# undef TERMIO
-# undef SGTTY
-#endif
-
-#if defined(OPENSSL_SYS_NETWARE)
-# undef TERMIOS
-# undef TERMIO
-# undef SGTTY
 #endif
 
 #ifdef TERMIOS
@@ -438,7 +440,7 @@ static int read_string_inner(UI *ui, UI_STRING *uis, int echo, int strip_nl)
 # else
     p = fgets(result, maxsize, tty_in);
 # endif
-    if (!p)
+    if (p == NULL)
         goto error;
     if (feof(tty_in))
         goto error;
@@ -476,7 +478,7 @@ static int open_console(UI *ui)
     CRYPTO_w_lock(CRYPTO_LOCK_UI);
     is_a_tty = 1;
 
-#if defined(OPENSSL_SYS_MACINTOSH_CLASSIC) || defined(OPENSSL_SYS_VXWORKS) || defined(OPENSSL_SYS_NETWARE)
+#if defined(OPENSSL_SYS_MACINTOSH_CLASSIC) || defined(OPENSSL_SYS_VXWORKS) || defined(OPENSSL_SYS_NETWARE) || defined(OPENSSL_SYS_BEOS)
     tty_in = stdin;
     tty_out = stderr;
 #else
@@ -507,18 +509,31 @@ static int open_console(UI *ui)
             is_a_tty = 0;
         else
 # endif
+# ifdef ENODEV
+            /*
+             * MacOS X returns ENODEV (Operation not supported by device),
+             * which seems appropriate.
+             */
+        if (errno == ENODEV)
+            is_a_tty = 0;
+        else
+# endif
             return 0;
     }
 #endif
 #ifdef OPENSSL_SYS_VMS
     status = sys$assign(&terminal, &channel, 0, 0);
+
+    /* if there isn't a TT device, something is very wrong */
     if (status != SS$_NORMAL)
         return 0;
-    status =
-        sys$qiow(0, channel, IO$_SENSEMODE, &iosb, 0, 0, tty_orig, 12, 0, 0,
-                 0, 0);
+
+    status = sys$qiow(0, channel, IO$_SENSEMODE, &iosb, 0, 0, tty_orig, 12,
+                      0, 0, 0, 0);
+
+    /* If IO$_SENSEMODE doesn't work, this is not a terminal device */
     if ((status != SS$_NORMAL) || (iosb.iosb$w_value != SS$_NORMAL))
-        return 0;
+        is_a_tty = 0;
 #endif
     return 1;
 }
@@ -535,14 +550,15 @@ static int noecho_console(UI *ui)
         return 0;
 #endif
 #ifdef OPENSSL_SYS_VMS
-    tty_new[0] = tty_orig[0];
-    tty_new[1] = tty_orig[1] | TT$M_NOECHO;
-    tty_new[2] = tty_orig[2];
-    status =
-        sys$qiow(0, channel, IO$_SETMODE, &iosb, 0, 0, tty_new, 12, 0, 0, 0,
-                 0);
-    if ((status != SS$_NORMAL) || (iosb.iosb$w_value != SS$_NORMAL))
-        return 0;
+    if (is_a_tty) {
+        tty_new[0] = tty_orig[0];
+        tty_new[1] = tty_orig[1] | TT$M_NOECHO;
+        tty_new[2] = tty_orig[2];
+        status = sys$qiow(0, channel, IO$_SETMODE, &iosb, 0, 0, tty_new, 12,
+                          0, 0, 0, 0);
+        if ((status != SS$_NORMAL) || (iosb.iosb$w_value != SS$_NORMAL))
+            return 0;
+    }
 #endif
     return 1;
 }
@@ -559,14 +575,15 @@ static int echo_console(UI *ui)
         return 0;
 #endif
 #ifdef OPENSSL_SYS_VMS
-    tty_new[0] = tty_orig[0];
-    tty_new[1] = tty_orig[1] & ~TT$M_NOECHO;
-    tty_new[2] = tty_orig[2];
-    status =
-        sys$qiow(0, channel, IO$_SETMODE, &iosb, 0, 0, tty_new, 12, 0, 0, 0,
-                 0);
-    if ((status != SS$_NORMAL) || (iosb.iosb$w_value != SS$_NORMAL))
-        return 0;
+    if (is_a_tty) {
+        tty_new[0] = tty_orig[0];
+        tty_new[1] = tty_orig[1] & ~TT$M_NOECHO;
+        tty_new[2] = tty_orig[2];
+        status = sys$qiow(0, channel, IO$_SETMODE, &iosb, 0, 0, tty_new, 12,
+                          0, 0, 0, 0);
+        if ((status != SS$_NORMAL) || (iosb.iosb$w_value != SS$_NORMAL))
+            return 0;
+    }
 #endif
     return 1;
 }
@@ -579,6 +596,8 @@ static int close_console(UI *ui)
         fclose(tty_out);
 #ifdef OPENSSL_SYS_VMS
     status = sys$dassgn(channel);
+    if (status != SS$_NORMAL)
+        return 0;
 #endif
     CRYPTO_w_unlock(CRYPTO_LOCK_UI);
 

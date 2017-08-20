@@ -1,6 +1,7 @@
 #!/usr/local/bin/perl -w
 
 my $config = "crypto/err/openssl.ec";
+my $hprefix = "openssl/";
 my $debug = 0;
 my $rebuild = 0;
 my $static = 1;
@@ -12,11 +13,17 @@ my $staticloader = "";
 my $pack_errcode;
 my $load_errcode;
 
+my $errcount;
+my $year = (localtime)[5] + 1900;
+
 while (@ARGV) {
 	my $arg = $ARGV[0];
 	if($arg eq "-conf") {
 		shift @ARGV;
 		$config = shift @ARGV;
+	} elsif($arg eq "-hprefix") {
+		shift @ARGV;
+		$hprefix = shift @ARGV;
 	} elsif($arg eq "-debug") {
 		$debug = 1;
 		shift @ARGV;
@@ -38,14 +45,78 @@ while (@ARGV) {
 	} elsif($arg eq "-write") {
 		$dowrite = 1;
 		shift @ARGV;
+	} elsif($arg eq "-help" || $arg eq "-h" || $arg eq "-?" || $arg eq "--help") {
+		print STDERR <<"EOF";
+mkerr.pl [options] ...
+
+Options:
+
+  -conf F       Use the config file F instead of the default one:
+                  crypto/err/openssl.ec
+
+  -hprefix P    Prepend the filenames in generated #include <header>
+                statements with prefix P. Default: 'openssl/' (without
+                the quotes, naturally)
+
+  -debug        Turn on debugging verbose output on stderr.
+
+  -rebuild      Rebuild all header and C source files, irrespective of the
+                fact if any error or function codes have been added/removed.
+                Default: only update files for libraries which saw change
+                         (of course, this requires '-write' as well, or no
+                          files will be touched!)
+
+  -recurse      scan a preconfigured set of directories / files for error and
+                function codes:
+                  (<crypto/*.c>, <crypto/*/*.c>, <ssl/*.c>, <apps/*.c>)
+                When this option is NOT specified, the filelist is taken from
+                the commandline instead. Here, wildcards may be embedded. (Be
+                sure to escape those to prevent the shell from expanding them
+                for you when you wish mkerr.pl to do so instead.)
+                Default: take file list to scan from the command line.
+
+  -reindex      Discard the numeric values previously assigned to the error
+                and function codes as extracted from the scanned header files;
+                instead renumber all of them starting from 100. (Note that
+                the numbers assigned through 'R' records in the config file
+                remain intact.)
+                Default: keep previously assigned numbers. (You are warned
+                         when collisions are detected.)
+
+  -nostatic     Generates a different source code, where these additional 
+                functions are generated for each library specified in the
+                config file:
+                  void ERR_load_<LIB>_strings(void);
+                  void ERR_unload_<LIB>_strings(void);
+                  void ERR_<LIB>_error(int f, int r, char *fn, int ln);
+                  #define <LIB>err(f,r) ERR_<LIB>_error(f,r,__FILE__,__LINE__)
+                while the code facilitates the use of these in an environment
+                where the error support routines are dynamically loaded at 
+                runtime.
+                Default: 'static' code generation.
+
+  -staticloader Prefix generated functions with the 'static' scope modifier.
+                Default: don't write any scope modifier prefix.
+
+  -write        Actually (over)write the generated code to the header and C 
+                source files as assigned to each library through the config 
+                file.
+                Default: don't write.
+
+  -help / -h / -? / --help            Show this help text.
+
+  ...           Additional arguments are added to the file list to scan,
+                assuming '-recurse' was NOT specified on the command line.
+
+EOF
+		exit 1;
 	} else {
 		last;
 	}
 }
 
 if($recurse) {
-	@source = ( <crypto/*.c>, <crypto/*/*.c>, <ssl/*.c>,
-			<fips/*.c>, <fips/*/*.c>);
+	@source = (<crypto/*.c>, <crypto/*/*.c>, <ssl/*.c>);
 } else {
 	@source = @ARGV;
 }
@@ -64,8 +135,8 @@ while(<IN>)
 		$cskip{$3} = $1;
 		if($3 ne "NONE") {
 			$csrc{$1} = $3;
-			$fmax{$1} = 99;
-			$rmax{$1} = 99;
+			$fmax{$1} = 100;
+			$rmax{$1} = 100;
 			$fassigned{$1} = ":";
 			$rassigned{$1} = ":";
 			$fnew{$1} = 0;
@@ -87,8 +158,8 @@ close IN;
 while (($hdr, $lib) = each %libinc)
 {
 	next if($hdr eq "NONE");
-	print STDERR "Scanning header file $hdr\n" if $debug; 
-	my $line = "", $def= "", $linenr = 0, $gotfile = 0;
+	print STDERR "Scanning header file $hdr\n" if $debug;
+	my $line = "", $def= "", $linenr = 0, $gotfile = 0, $cpp = 0;
 	if (open(IN, "<$hdr")) {
 	    $gotfile = 1;
 	    while(<IN>) {
@@ -191,7 +262,8 @@ while (($hdr, $lib) = each %libinc)
 			if($1 eq "R") {
 				$rcodes{$name} = $code;
 				if ($rassigned{$lib} =~ /:$code:/) {
-					print STDERR "!! ERROR: $lib reason code $code assigned twice\n";
+					print STDERR "!! ERROR: $lib reason code $code assigned twice (collision at $name)\n";
+					++$errcount;
 				}
 				$rassigned{$lib} .= "$code:";
 				if(!(exists $rextra{$name}) &&
@@ -200,7 +272,8 @@ while (($hdr, $lib) = each %libinc)
 				}
 			} else {
 				if ($fassigned{$lib} =~ /:$code:/) {
-					print STDERR "!! ERROR: $lib function code $code assigned twice\n";
+					print STDERR "!! ERROR: $lib function code $code assigned twice (collision at $name)\n";
+					++$errcount;
 				}
 				$fassigned{$lib} .= "$code:";
 				if($code > $fmax{$lib}) {
@@ -231,6 +304,7 @@ while (($hdr, $lib) = each %libinc)
 		if ($rmax{$lib} >= 1000) {
 			print STDERR "!! ERROR: SSL error codes 1000+ are reserved for alerts.\n";
 			print STDERR "!!        Any new alerts must be added to $config.\n";
+			++$errcount;
 			print STDERR "\n";
 		}
 	}
@@ -255,6 +329,9 @@ foreach $file (@source) {
 	print STDERR "File loaded: ".$file."\r" if $debug;
 	open(IN, "<$file") || die "Can't open source file $file\n";
 	while(<IN>) {
+		# skip obsoleted source files entirely!
+		last if(/^#error\s+obsolete/);
+
 		if(/(([A-Z0-9]+)_F_([A-Z0-9_]+))/) {
 			next unless exists $csrc{$2};
 			next if($1 eq "BIO_F_BUFFER_CTX");
@@ -264,6 +341,7 @@ foreach $file (@source) {
 				$fnew{$2}++;
 			}
 			$notrans{$1} = 1 unless exists $ftrans{$3};
+			print STDERR "Function: $1\t= $fcodes{$1} (lib: $2, name: $3)\n" if $debug; 
 		}
 		if(/(([A-Z0-9]+)_R_[A-Z0-9_]+)/) {
 			next unless exists $csrc{$2};
@@ -272,6 +350,7 @@ foreach $file (@source) {
 				$rcodes{$1} = "X";
 				$rnew{$2}++;
 			}
+			print STDERR "Reason: $1\t= $rcodes{$1} (lib: $2)\n" if $debug; 
 		} 
 	}
 	close IN;
@@ -303,17 +382,24 @@ foreach $lib (keys %csrc)
 
 	# Rewrite the header file
 
+	$cpp = 0;
+	$cplusplus = 0;
 	if (open(IN, "<$hfile")) {
 	    # Copy across the old file
 	    while(<IN>) {
+		$cplusplus = $cpp if /^#.*ifdef.*cplusplus/;
+		$cpp++ if /^#\s*if/;
+		$cpp-- if /^#\s*endif/;
 		push @out, $_;
 		last if (/BEGIN ERROR CODES/);
 	    }
 	    close IN;
 	} else {
+	    $cpp = 1;
+	    $cplusplus = 1;
 	    push @out,
 "/* ====================================================================\n",
-" * Copyright (c) 2001-2011 The OpenSSL Project.  All rights reserved.\n",
+" * Copyright (c) 2001-$year The OpenSSL Project.  All rights reserved.\n",
 " *\n",
 " * Redistribution and use in source and binary forms, with or without\n",
 " * modification, are permitted provided that the following conditions\n",
@@ -367,7 +453,11 @@ foreach $lib (keys %csrc)
 " */\n",
 "\n",
 "#ifndef HEADER_${lib}_ERR_H\n",
-"#define HEADER_${lib}_ERR_H\n",
+"# define HEADER_${lib}_ERR_H\n",
+"\n",
+"# ifdef  __cplusplus\n",
+"extern \"C\" {\n",
+"# endif\n",
 "\n",
 "/* BEGIN ERROR CODES */\n";
 	}
@@ -380,6 +470,7 @@ foreach $lib (keys %csrc)
  * The following lines are auto generated by the script mkerr.pl. Any changes
  * made after this point may be overwritten when the script is next run.
  */
+
 EOF
 	if($static) {
 		print OUT <<"EOF";
@@ -440,11 +531,17 @@ EOF
 	}
 	print OUT <<"EOF";
 
-#ifdef  __cplusplus
-}
-#endif
-#endif
 EOF
+	do {
+	    if ($cplusplus == $cpp) {
+		print OUT "#", " "x$cpp, "ifdef  __cplusplus\n";
+		print OUT "}\n";
+		print OUT "#", " "x$cpp, "endif\n";
+	    }
+	    if ($cpp-- > 0) {
+		print OUT "#", " "x$cpp, "endif\n";
+	    }
+	} while ($cpp);
 	close OUT;
 
 	# Rewrite the C source file containing the error details.
@@ -457,9 +554,14 @@ EOF
 			chomp;
 			$_ = $line . $_;
 			$line = "";
-			if (/{ERR_REASON\(/) {
+			if (/{ERR_(FUNC|REASON)\(/) {
 				if (/\b(${lib}_R_\w*)\b.*\"(.*)\"/) {
 					$err_reason_strings{$1} = $2;
+				} elsif (/\b${lib}_F_(\w*)\b.*\"(.*)\"/) {
+					if (!exists $ftrans{$1} && ($1 ne $2)) {
+						print STDERR "WARNING: Mismatched function string $2\n";
+						$ftrans{$1} = $2;
+					}
 				} else {
 					$line = $_;
 				}
@@ -468,10 +570,12 @@ EOF
 		close(IN);
 	}
 
+
 	my $hincf;
 	if($static) {
-		$hfile =~ /([^\/]+)$/;
-		$hincf = "<openssl/$1>";
+		$hincf = $hfile;
+		$hincf =~ s|.*/||g;
+		$hincf = "<${hprefix}${hincf}>";
 	} else {
 		$hincf = "\"$hfile\"";
 	}
@@ -496,7 +600,7 @@ EOF
 	print OUT <<"EOF";
 /* $cfile */
 /* ====================================================================
- * Copyright (c) 1999-2011 The OpenSSL Project.  All rights reserved.
+ * Copyright (c) 1999-$year The OpenSSL Project.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -576,7 +680,7 @@ EOF
 			$fn = $ftrans{$fn};
 		}
 #		print OUT "{ERR_PACK($pack_errcode,$i,0),\t\"$fn\"},\n";
-		if(length($i) + length($fn) > 58) {
+		if(length($i) + length($fn) > 57) {
 			print OUT "    {ERR_FUNC($i),\n     \"$fn\"},\n";
 		} else {
 			print OUT "    {ERR_FUNC($i), \"$fn\"},\n";
@@ -599,7 +703,7 @@ EOF
 			$rn = $1;
 			$rn =~ tr/_[A-Z]/ [a-z]/;
 		}
-		if(length($i) + length($rn) > 56) {
+		if(length($i) + length($rn) > 55) {
 			print OUT "    {${rstr},\n     \"$rn\"},\n";
 		} else {
 			print OUT "    {${rstr}, \"$rn\"},\n";
@@ -721,3 +825,9 @@ if($debug && @runref) {
 		print STDERR "$_\n";
 	}
 }
+
+if($errcount) {
+	print STDERR "There were errors, failing...\n\n";
+	exit $errcount;
+}
+

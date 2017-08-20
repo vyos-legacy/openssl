@@ -201,9 +201,14 @@ static int enc_read(BIO *b, char *out, int outl)
                 break;
             }
         } else {
-            EVP_CipherUpdate(&(ctx->cipher),
-                             (unsigned char *)ctx->buf, &ctx->buf_len,
-                             (unsigned char *)&(ctx->buf[BUF_OFFSET]), i);
+            if (!EVP_CipherUpdate(&ctx->cipher,
+                                  (unsigned char *)ctx->buf, &ctx->buf_len,
+                                  (unsigned char *)&(ctx->buf[BUF_OFFSET]),
+                                  i)) {
+                BIO_clear_retry_flags(b);
+                ctx->ok = 0;
+                return 0;
+            }
             ctx->cont = 1;
             /*
              * Note: it is possible for EVP_CipherUpdate to decrypt zero
@@ -260,9 +265,13 @@ static int enc_write(BIO *b, const char *in, int inl)
     ctx->buf_off = 0;
     while (inl > 0) {
         n = (inl > ENC_BLOCK_SIZE) ? ENC_BLOCK_SIZE : inl;
-        EVP_CipherUpdate(&(ctx->cipher),
-                         (unsigned char *)ctx->buf, &ctx->buf_len,
-                         (unsigned char *)in, n);
+        if (!EVP_CipherUpdate(&ctx->cipher,
+                              (unsigned char *)ctx->buf, &ctx->buf_len,
+                              (unsigned char *)in, n)) {
+            BIO_clear_retry_flags(b);
+            ctx->ok = 0;
+            return 0;
+        }
         inl -= n;
         in += n;
 
@@ -360,8 +369,10 @@ static long enc_ctrl(BIO *b, int cmd, long num, void *ptr)
     case BIO_CTRL_DUP:
         dbio = (BIO *)ptr;
         dctx = (BIO_ENC_CTX *)dbio->ptr;
-        memcpy(&(dctx->cipher), &(ctx->cipher), sizeof(ctx->cipher));
-        dbio->init = 1;
+        EVP_CIPHER_CTX_init(&dctx->cipher);
+        ret = EVP_CIPHER_CTX_copy(&dctx->cipher, &ctx->cipher);
+        if (ret)
+            dbio->init = 1;
         break;
     default:
         ret = BIO_ctrl(b->next_bio, cmd, num, ptr);

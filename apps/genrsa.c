@@ -80,7 +80,7 @@
 # include <openssl/pem.h>
 # include <openssl/rand.h>
 
-# define DEFBITS 512
+# define DEFBITS 2048
 # undef PROG
 # define PROG genrsa_main
 
@@ -91,17 +91,15 @@ int MAIN(int, char **);
 int MAIN(int argc, char **argv)
 {
     BN_GENCB cb;
+    ENGINE *e = NULL;
     int ret = 1;
     int i, num = DEFBITS;
     long l;
-    int use_x931 = 0;
     const EVP_CIPHER *enc = NULL;
     unsigned long f4 = RSA_F4;
     char *outfile = NULL;
     char *passargout = NULL, *passout = NULL;
-# ifndef OPENSSL_NO_ENGINE
     char *engine = NULL;
-# endif
     char *inrand = NULL;
     BIO *out = NULL;
     BIGNUM *bn = BN_new();
@@ -137,8 +135,6 @@ int MAIN(int argc, char **argv)
             f4 = 3;
         else if (strcmp(*argv, "-F4") == 0 || strcmp(*argv, "-f4") == 0)
             f4 = RSA_F4;
-        else if (strcmp(*argv, "-x931") == 0)
-            use_x931 = 1;
 # ifndef OPENSSL_NO_ENGINE
         else if (strcmp(*argv, "-engine") == 0) {
             if (--argc < 1)
@@ -240,9 +236,7 @@ int MAIN(int argc, char **argv)
         BIO_printf(bio_err, "Error getting password\n");
         goto err;
     }
-# ifndef OPENSSL_NO_ENGINE
-    setup_engine(bio_err, engine, 0);
-# endif
+    e = setup_engine(bio_err, engine, 0);
 
     if (outfile == NULL) {
         BIO_set_fp(out, stdout, BIO_NOCLOSE);
@@ -270,21 +264,15 @@ int MAIN(int argc, char **argv)
 
     BIO_printf(bio_err, "Generating RSA private key, %d bit long modulus\n",
                num);
-
+# ifdef OPENSSL_NO_ENGINE
     rsa = RSA_new();
+# else
+    rsa = RSA_new_method(e);
+# endif
     if (!rsa)
         goto err;
 
-    if (use_x931) {
-        BIGNUM *pubexp;
-        pubexp = BN_new();
-        if (!BN_set_word(pubexp, f4))
-            goto err;
-        if (!RSA_X931_generate_key_ex(rsa, num, pubexp, &cb))
-            goto err;
-        BN_free(pubexp);
-    } else if (!BN_set_word(bn, f4)
-               || !RSA_generate_key_ex(rsa, num, bn, &cb))
+    if (!BN_set_word(bn, f4) || !RSA_generate_key_ex(rsa, num, bn, &cb))
         goto err;
 
     app_RAND_write_file(NULL, bio_err);
@@ -320,6 +308,7 @@ int MAIN(int argc, char **argv)
         RSA_free(rsa);
     if (out)
         BIO_free_all(out);
+    release_engine(e);
     if (passout)
         OPENSSL_free(passout);
     if (ret != 0)

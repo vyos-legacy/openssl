@@ -106,7 +106,7 @@
  *                    in the asn1 der encoding
  *                    possible values: named_curve (default)
  *                                     explicit
- * -no_seed         - if 'explicit' parameters are choosen do not use the seed
+ * -no_seed         - if 'explicit' parameters are chosen do not use the seed
  * -genkey          - generate ec key
  * -rand file       - files to use for random number input
  * -engine e        - use engine e, possibly a hardware device
@@ -131,6 +131,7 @@ int MAIN(int argc, char **argv)
     BIO *in = NULL, *out = NULL;
     int informat, outformat, noout = 0, C = 0, ret = 1;
     char *engine = NULL;
+    ENGINE *e = NULL;
 
     BIGNUM *ec_p = NULL, *ec_a = NULL, *ec_b = NULL,
         *ec_gen = NULL, *ec_order = NULL, *ec_cofactor = NULL;
@@ -270,7 +271,7 @@ int MAIN(int argc, char **argv)
         BIO_printf(bio_err, "                                   "
                    " explicit\n");
         BIO_printf(bio_err, " -no_seed          if 'explicit'"
-                   " parameters are choosen do not" " use the seed\n");
+                   " parameters are chosen do not" " use the seed\n");
         BIO_printf(bio_err, " -genkey           generate ec" " key\n");
         BIO_printf(bio_err, " -rand file        files to use for"
                    " random number input\n");
@@ -311,9 +312,7 @@ int MAIN(int argc, char **argv)
         }
     }
 
-# ifndef OPENSSL_NO_ENGINE
-    setup_engine(bio_err, engine, 0);
-# endif
+    e = setup_engine(bio_err, engine, 0);
 
     if (list_curves) {
         EC_builtin_curve *curves = NULL;
@@ -370,6 +369,9 @@ int MAIN(int argc, char **argv)
         } else
             nid = OBJ_sn2nid(curve_name);
 
+        if (nid == 0)
+            nid = EC_curve_nist2nid(curve_name);
+
         if (nid == 0) {
             BIO_printf(bio_err, "unknown curve name (%s)\n", curve_name);
             goto end;
@@ -413,14 +415,13 @@ int MAIN(int argc, char **argv)
     }
 
     if (check) {
-        if (group == NULL)
-            BIO_printf(bio_err, "no elliptic curve parameters\n");
         BIO_printf(bio_err, "checking elliptic curve parameters: ");
         if (!EC_GROUP_check(group, NULL)) {
             BIO_printf(bio_err, "failed\n");
             ERR_print_errors(bio_err);
-        } else
-            BIO_printf(bio_err, "ok\n");
+            goto end;
+        }
+        BIO_printf(bio_err, "ok\n");
 
     }
 
@@ -618,12 +619,13 @@ int MAIN(int argc, char **argv)
         BN_free(ec_cofactor);
     if (buffer)
         OPENSSL_free(buffer);
+    if (group != NULL)
+        EC_GROUP_free(group);
+    release_engine(e);
     if (in != NULL)
         BIO_free(in);
     if (out != NULL)
         BIO_free_all(out);
-    if (group != NULL)
-        EC_GROUP_free(group);
     apps_shutdown();
     OPENSSL_EXIT(ret);
 }
@@ -650,4 +652,10 @@ static int ecparam_print_var(BIO *out, BIGNUM *in, const char *var,
     BIO_printf(out, "\n\t};\n\n");
     return 1;
 }
+#else                           /* !OPENSSL_NO_EC */
+
+# if PEDANTIC
+static void *dummy = &dummy;
+# endif
+
 #endif

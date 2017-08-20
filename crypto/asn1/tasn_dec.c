@@ -124,6 +124,8 @@ unsigned long ASN1_tag2bit(int tag)
 /* Macro to initialize and invalidate the cache */
 
 #define asn1_tlc_clear(c)       if (c) (c)->valid = 0
+/* Version to avoid compiler warning about 'c' always non-NULL */
+#define asn1_tlc_clear_nc(c)    (c)->valid = 0
 
 /*
  * Decode an ASN1 item, this currently behaves just like a standard 'd2i'
@@ -140,7 +142,7 @@ ASN1_VALUE *ASN1_item_d2i(ASN1_VALUE **pval,
     ASN1_VALUE *ptmpval = NULL;
     if (!pval)
         pval = &ptmpval;
-    c.valid = 0;
+    asn1_tlc_clear_nc(&c);
     if (ASN1_item_ex_d2i(pval, in, len, it, -1, 0, 0, &c) > 0)
         return *pval;
     return NULL;
@@ -151,7 +153,7 @@ int ASN1_template_d2i(ASN1_VALUE **pval,
                       const ASN1_TEMPLATE *tt)
 {
     ASN1_TLC c;
-    c.valid = 0;
+    asn1_tlc_clear_nc(&c);
     return asn1_template_ex_d2i(pval, in, len, tt, 0, &c);
 }
 
@@ -302,7 +304,7 @@ int ASN1_item_ex_d2i(ASN1_VALUE **pval, const unsigned char **in, long len,
         goto err;
 
     case ASN1_ITYPE_CHOICE:
-        if (asn1_cb && !asn1_cb(ASN1_OP_D2I_PRE, pval, it))
+        if (asn1_cb && !asn1_cb(ASN1_OP_D2I_PRE, pval, it, NULL))
             goto auxerr;
         if (*pval) {
             /* Free up and zero CHOICE value if initialised */
@@ -350,9 +352,9 @@ int ASN1_item_ex_d2i(ASN1_VALUE **pval, const unsigned char **in, long len,
         }
 
         asn1_set_choice_selector(pval, i, it);
-        *in = p;
-        if (asn1_cb && !asn1_cb(ASN1_OP_D2I_POST, pval, it))
+        if (asn1_cb && !asn1_cb(ASN1_OP_D2I_POST, pval, it, NULL))
             goto auxerr;
+        *in = p;
         return 1;
 
     case ASN1_ITYPE_NDEF_SEQUENCE:
@@ -390,7 +392,7 @@ int ASN1_item_ex_d2i(ASN1_VALUE **pval, const unsigned char **in, long len,
             goto err;
         }
 
-        if (asn1_cb && !asn1_cb(ASN1_OP_D2I_PRE, pval, it))
+        if (asn1_cb && !asn1_cb(ASN1_OP_D2I_PRE, pval, it, NULL))
             goto auxerr;
 
         /* Free up and zero any ADB found */
@@ -398,7 +400,9 @@ int ASN1_item_ex_d2i(ASN1_VALUE **pval, const unsigned char **in, long len,
             if (tt->flags & ASN1_TFLG_ADB_MASK) {
                 const ASN1_TEMPLATE *seqtt;
                 ASN1_VALUE **pseqval;
-                seqtt = asn1_do_adb(pval, tt, 1);
+                seqtt = asn1_do_adb(pval, tt, 0);
+                if (seqtt == NULL)
+                    continue;
                 pseqval = asn1_get_field_ptr(pval, seqtt);
                 ASN1_template_free(pseqval, seqtt);
             }
@@ -409,7 +413,7 @@ int ASN1_item_ex_d2i(ASN1_VALUE **pval, const unsigned char **in, long len,
             const ASN1_TEMPLATE *seqtt;
             ASN1_VALUE **pseqval;
             seqtt = asn1_do_adb(pval, tt, 1);
-            if (!seqtt)
+            if (seqtt == NULL)
                 goto err;
             pseqval = asn1_get_field_ptr(pval, seqtt);
             /* Have we ran out of data? */
@@ -474,7 +478,7 @@ int ASN1_item_ex_d2i(ASN1_VALUE **pval, const unsigned char **in, long len,
         for (; i < it->tcount; tt++, i++) {
             const ASN1_TEMPLATE *seqtt;
             seqtt = asn1_do_adb(pval, tt, 1);
-            if (!seqtt)
+            if (seqtt == NULL)
                 goto err;
             if (seqtt->flags & ASN1_TFLG_OPTIONAL) {
                 ASN1_VALUE **pseqval;
@@ -489,9 +493,9 @@ int ASN1_item_ex_d2i(ASN1_VALUE **pval, const unsigned char **in, long len,
         /* Save encoding */
         if (!asn1_enc_save(pval, *in, p - *in, it))
             goto auxerr;
-        *in = p;
-        if (asn1_cb && !asn1_cb(ASN1_OP_D2I_POST, pval, it))
+        if (asn1_cb && !asn1_cb(ASN1_OP_D2I_POST, pval, it, NULL))
             goto auxerr;
+        *in = p;
         return 1;
 
     default:
@@ -632,10 +636,10 @@ static int asn1_template_noexp_d2i(ASN1_VALUE **val,
             /*
              * We've got a valid STACK: free up any items present
              */
-            STACK *sktmp = (STACK *) * val;
+            STACK_OF(ASN1_VALUE) *sktmp = (STACK_OF(ASN1_VALUE) *)*val;
             ASN1_VALUE *vtmp;
-            while (sk_num(sktmp) > 0) {
-                vtmp = (ASN1_VALUE *)sk_pop(sktmp);
+            while (sk_ASN1_VALUE_num(sktmp) > 0) {
+                vtmp = sk_ASN1_VALUE_pop(sktmp);
                 ASN1_item_ex_free(&vtmp, ASN1_ITEM_ptr(tt->item));
             }
         }
@@ -668,7 +672,8 @@ static int asn1_template_noexp_d2i(ASN1_VALUE **val,
                 goto err;
             }
             len -= p - q;
-            if (!sk_push((STACK *) * val, (char *)skfield)) {
+            if (!sk_ASN1_VALUE_push((STACK_OF(ASN1_VALUE) *)*val, skfield)) {
+                ASN1_item_ex_free(&skfield, ASN1_ITEM_ptr(tt->item));
                 ASN1err(ASN1_F_ASN1_TEMPLATE_NOEXP_D2I, ERR_R_MALLOC_FAILURE);
                 goto err;
             }
@@ -715,7 +720,7 @@ static int asn1_d2i_ex_primitive(ASN1_VALUE **pval,
     long plen;
     char cst, inf, free_cont = 0;
     const unsigned char *p;
-    BUF_MEM buf;
+    BUF_MEM buf = { 0, NULL, 0 };
     const unsigned char *cont = NULL;
     long len;
     if (!pval) {
@@ -791,7 +796,6 @@ static int asn1_d2i_ex_primitive(ASN1_VALUE **pval,
         } else {
             len = p - cont + plen;
             p += plen;
-            buf.data = NULL;
         }
     } else if (cst) {
         if (utype == V_ASN1_NULL || utype == V_ASN1_BOOLEAN
@@ -800,9 +804,9 @@ static int asn1_d2i_ex_primitive(ASN1_VALUE **pval,
             ASN1err(ASN1_F_ASN1_D2I_EX_PRIMITIVE, ASN1_R_TYPE_NOT_PRIMITIVE);
             return 0;
         }
-        buf.length = 0;
-        buf.max = 0;
-        buf.data = NULL;
+
+        /* Free any returned 'buf' content */
+        free_cont = 1;
         /*
          * Should really check the internal tags are correct but some things
          * may get this wrong. The relevant specs say that constructed string
@@ -810,18 +814,16 @@ static int asn1_d2i_ex_primitive(ASN1_VALUE **pval,
          * So instead just check for UNIVERSAL class and ignore the tag.
          */
         if (!asn1_collect(&buf, &p, plen, inf, -1, V_ASN1_UNIVERSAL, 0)) {
-            free_cont = 1;
             goto err;
         }
         len = buf.length;
         /* Append a final null to string */
         if (!BUF_MEM_grow_clean(&buf, len + 1)) {
             ASN1err(ASN1_F_ASN1_D2I_EX_PRIMITIVE, ERR_R_MALLOC_FAILURE);
-            return 0;
+            goto err;
         }
         buf.data[len] = 0;
         cont = (const unsigned char *)buf.data;
-        free_cont = 1;
     } else {
         cont = p;
         len = plen;
@@ -829,6 +831,7 @@ static int asn1_d2i_ex_primitive(ASN1_VALUE **pval,
     }
 
     /* We now have content length and type: translate into a structure */
+    /* asn1_ex_c2i may reuse allocated buffer, and so sets free_cont to 0 */
     if (!asn1_ex_c2i(pval, cont, len, utype, &free_cont, it))
         goto err;
 
@@ -901,9 +904,7 @@ int asn1_ex_c2i(ASN1_VALUE **pval, const unsigned char *cont, int len,
         break;
 
     case V_ASN1_INTEGER:
-    case V_ASN1_NEG_INTEGER:
     case V_ASN1_ENUMERATED:
-    case V_ASN1_NEG_ENUMERATED:
         tint = (ASN1_INTEGER **)pval;
         if (!c2i_ASN1_INTEGER(tint, &cont, len))
             goto err;

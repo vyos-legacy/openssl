@@ -93,8 +93,10 @@ OCSP_ONEREQ *OCSP_request_add0_id(OCSP_REQUEST *req, OCSP_CERTID *cid)
     if (one->reqCert)
         OCSP_CERTID_free(one->reqCert);
     one->reqCert = cid;
-    if (req && !sk_OCSP_ONEREQ_push(req->tbsRequest->requestList, one))
+    if (req && !sk_OCSP_ONEREQ_push(req->tbsRequest->requestList, one)) {
+        one->reqCert = NULL; /* do not free on error */
         goto err;
+    }
     return one;
  err:
     OCSP_ONEREQ_free(one);
@@ -162,8 +164,6 @@ int OCSP_request_sign(OCSP_REQUEST *req,
 
     if (!(req->optionalSignature = sig = OCSP_SIGNATURE_new()))
         goto err;
-    if (!dgst)
-        dgst = EVP_sha1();
     if (key) {
         if (!X509_check_private_key(signer, key)) {
             OCSPerr(OCSP_F_OCSP_REQUEST_SIGN,

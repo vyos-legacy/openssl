@@ -109,6 +109,8 @@
  *
  */
 
+#define OPENSSL_FIPSEVP
+
 #ifdef MD_RAND_DEBUG
 # ifndef NDEBUG
 #  define NDEBUG
@@ -121,14 +123,11 @@
 
 #include "e_os.h"
 
+#include <openssl/crypto.h>
 #include <openssl/rand.h>
 #include "rand_lcl.h"
 
-#include <openssl/crypto.h>
 #include <openssl/err.h>
-#ifdef OPENSSL_FIPS
-# include <openssl/fips.h>
-#endif
 
 #ifdef BN_DEBUG
 # define PREDICT
@@ -137,7 +136,7 @@
 /* #define PREDICT      1 */
 
 #define STATE_SIZE      1023
-static int state_num = 0, state_index = 0;
+static size_t state_num = 0, state_index = 0;
 static unsigned char state[STATE_SIZE + MD_DIGEST_LENGTH];
 static unsigned char md[MD_DIGEST_LENGTH];
 static long md_count[2] = { 0, 0 };
@@ -150,7 +149,7 @@ static unsigned int crypto_lock_rand = 0; /* may be set only when a thread
                                            * prevent double locking) */
 /* access to lockin_thread is synchronized by CRYPTO_LOCK_RAND2 */
 /* valid iff crypto_lock_rand is set */
-static unsigned long locking_thread = 0;
+static CRYPTO_THREADID locking_threadid;
 
 #ifdef PREDICT
 int rand_predictable = 0;
@@ -161,13 +160,13 @@ const char RAND_version[] = "RAND" OPENSSL_VERSION_PTEXT;
 static void ssleay_rand_cleanup(void);
 static void ssleay_rand_seed(const void *buf, int num);
 static void ssleay_rand_add(const void *buf, int num, double add_entropy);
-static int ssleay_rand_bytes(unsigned char *buf, int num);
+static int ssleay_rand_nopseudo_bytes(unsigned char *buf, int num);
 static int ssleay_rand_pseudo_bytes(unsigned char *buf, int num);
 static int ssleay_rand_status(void);
 
 RAND_METHOD rand_ssleay_meth = {
     ssleay_rand_seed,
-    ssleay_rand_bytes,
+    ssleay_rand_nopseudo_bytes,
     ssleay_rand_cleanup,
     ssleay_rand_add,
     ssleay_rand_pseudo_bytes,
@@ -199,6 +198,9 @@ static void ssleay_rand_add(const void *buf, int num, double add)
     EVP_MD_CTX m;
     int do_not_lock;
 
+    if (!num)
+        return;
+
     /*
      * (Based on the rand(3) manpage)
      *
@@ -216,8 +218,10 @@ static void ssleay_rand_add(const void *buf, int num, double add)
 
     /* check if we already have the lock */
     if (crypto_lock_rand) {
+        CRYPTO_THREADID cur;
+        CRYPTO_THREADID_current(&cur);
         CRYPTO_r_lock(CRYPTO_LOCK_RAND2);
-        do_not_lock = (locking_thread == CRYPTO_thread_id());
+        do_not_lock = !CRYPTO_THREADID_cmp(&locking_threadid, &cur);
         CRYPTO_r_unlock(CRYPTO_LOCK_RAND2);
     } else
         do_not_lock = 0;
@@ -262,18 +266,32 @@ static void ssleay_rand_add(const void *buf, int num, double add)
         j = (num - i);
         j = (j > MD_DIGEST_LENGTH) ? MD_DIGEST_LENGTH : j;
 
-        MD_Init(&m);
-        MD_Update(&m, local_md, MD_DIGEST_LENGTH);
+        if (!MD_Init(&m) ||
+            !MD_Update(&m, local_md, MD_DIGEST_LENGTH))
+            goto err;
         k = (st_idx + j) - STATE_SIZE;
         if (k > 0) {
-            MD_Update(&m, &(state[st_idx]), j - k);
-            MD_Update(&m, &(state[0]), k);
+            if (!MD_Update(&m, &(state[st_idx]), j - k) ||
+                !MD_Update(&m, &(state[0]), k))
+                goto err;
         } else
-            MD_Update(&m, &(state[st_idx]), j);
+            if (!MD_Update(&m, &(state[st_idx]), j))
+                goto err;
 
-        MD_Update(&m, buf, j);
-        MD_Update(&m, (unsigned char *)&(md_c[0]), sizeof(md_c));
-        MD_Final(&m, local_md);
+        /* DO NOT REMOVE THE FOLLOWING CALL TO MD_Update()! */
+        if (!MD_Update(&m, buf, j))
+            goto err;
+        /*
+         * We know that line may cause programs such as purify and valgrind
+         * to complain about use of uninitialized data.  The problem is not,
+         * it's with the caller.  Removing that line will make sure you get
+         * really bad randomness and thereby other problems such as very
+         * insecure keys.
+         */
+
+        if (!MD_Update(&m, (unsigned char *)&(md_c[0]), sizeof(md_c)) ||
+            !MD_Final(&m, local_md))
+            goto err;
         md_c[1]++;
 
         buf = (const char *)buf + j;
@@ -292,7 +310,6 @@ static void ssleay_rand_add(const void *buf, int num, double add)
                 st_idx = 0;
         }
     }
-    EVP_MD_CTX_cleanup(&m);
 
     if (!do_not_lock)
         CRYPTO_w_lock(CRYPTO_LOCK_RAND);
@@ -313,6 +330,9 @@ static void ssleay_rand_add(const void *buf, int num, double add)
 #if !defined(OPENSSL_THREADS) && !defined(OPENSSL_SYS_WIN32)
     assert(md_c[1] == md_count[1]);
 #endif
+
+ err:
+    EVP_MD_CTX_cleanup(&m);
 }
 
 static void ssleay_rand_seed(const void *buf, int num)
@@ -320,11 +340,11 @@ static void ssleay_rand_seed(const void *buf, int num)
     ssleay_rand_add(buf, num, (double)num);
 }
 
-static int ssleay_rand_bytes(unsigned char *buf, int num)
+int ssleay_rand_bytes(unsigned char *buf, int num, int pseudo, int lock)
 {
     static volatile int stirred_pool = 0;
-    int i, j, k, st_num, st_idx;
-    int num_ceil;
+    int i, j, k;
+    size_t num_ceil, st_idx, st_num;
     int ok;
     long md_c[2];
     unsigned char local_md[MD_DIGEST_LENGTH];
@@ -333,13 +353,6 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
     pid_t curr_pid = getpid();
 #endif
     int do_stir_pool = 0;
-
-#ifdef OPENSSL_FIPS
-    if (FIPS_mode()) {
-        FIPSerr(FIPS_F_SSLEAY_RAND_BYTES, FIPS_R_NON_FIPS_METHOD);
-        return 0;
-    }
-#endif
 
 #ifdef PREDICT
     if (rand_predictable) {
@@ -376,12 +389,12 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
      * are fed into the hash function and the results are kept in the
      * global 'md'.
      */
-
-    CRYPTO_w_lock(CRYPTO_LOCK_RAND);
+    if (lock)
+        CRYPTO_w_lock(CRYPTO_LOCK_RAND);
 
     /* prevent ssleay_rand_bytes() from trying to obtain the lock again */
     CRYPTO_w_lock(CRYPTO_LOCK_RAND2);
-    locking_thread = CRYPTO_thread_id();
+    CRYPTO_THREADID_current(&locking_threadid);
     CRYPTO_w_unlock(CRYPTO_LOCK_RAND2);
     crypto_lock_rand = 1;
 
@@ -456,31 +469,51 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
 
     /* before unlocking, we must clear 'crypto_lock_rand' */
     crypto_lock_rand = 0;
-    CRYPTO_w_unlock(CRYPTO_LOCK_RAND);
+    if (lock)
+        CRYPTO_w_unlock(CRYPTO_LOCK_RAND);
 
     while (num > 0) {
         /* num_ceil -= MD_DIGEST_LENGTH/2 */
         j = (num >= MD_DIGEST_LENGTH / 2) ? MD_DIGEST_LENGTH / 2 : num;
         num -= j;
-        MD_Init(&m);
+        if (!MD_Init(&m))
+           goto err;
 #ifndef GETPID_IS_MEANINGLESS
         if (curr_pid) {         /* just in the first iteration to save time */
-            MD_Update(&m, (unsigned char *)&curr_pid, sizeof curr_pid);
+            if (!MD_Update(&m, (unsigned char *)&curr_pid, sizeof curr_pid))
+                goto err;
             curr_pid = 0;
         }
 #endif
-        MD_Update(&m, local_md, MD_DIGEST_LENGTH);
-        MD_Update(&m, (unsigned char *)&(md_c[0]), sizeof(md_c));
-#ifndef PURIFY
-        MD_Update(&m, buf, j);  /* purify complains */
+        if (!MD_Update(&m, local_md, MD_DIGEST_LENGTH) ||
+            !MD_Update(&m, (unsigned char *)&(md_c[0]), sizeof(md_c)))
+            goto err;
+
+#ifndef PURIFY                  /* purify complains */
+#if 0
+        /*
+         * The following line uses the supplied buffer as a small source of
+         * entropy: since this buffer is often uninitialised it may cause
+         * programs such as purify or valgrind to complain. So for those
+         * builds it is not used: the removal of such a small source of
+         * entropy has negligible impact on security.
+         */
+        if (!MD_Update(&m, buf, j))
+            goto err;
 #endif
+#endif
+
         k = (st_idx + MD_DIGEST_LENGTH / 2) - st_num;
         if (k > 0) {
-            MD_Update(&m, &(state[st_idx]), MD_DIGEST_LENGTH / 2 - k);
-            MD_Update(&m, &(state[0]), k);
-        } else
-            MD_Update(&m, &(state[st_idx]), MD_DIGEST_LENGTH / 2);
-        MD_Final(&m, local_md);
+            if (!MD_Update(&m, &(state[st_idx]), MD_DIGEST_LENGTH / 2 - k) ||
+                !MD_Update(&m, &(state[0]), k))
+                goto err;
+        } else {
+            if (!MD_Update(&m, &(state[st_idx]), MD_DIGEST_LENGTH / 2))
+                goto err;
+        }
+        if (!MD_Final(&m, local_md))
+            goto err;
 
         for (i = 0; i < MD_DIGEST_LENGTH / 2; i++) {
             /* may compete with other threads */
@@ -492,23 +525,41 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
         }
     }
 
-    MD_Init(&m);
-    MD_Update(&m, (unsigned char *)&(md_c[0]), sizeof(md_c));
-    MD_Update(&m, local_md, MD_DIGEST_LENGTH);
-    CRYPTO_w_lock(CRYPTO_LOCK_RAND);
-    MD_Update(&m, md, MD_DIGEST_LENGTH);
-    MD_Final(&m, md);
-    CRYPTO_w_unlock(CRYPTO_LOCK_RAND);
+    if (!MD_Init(&m) ||
+        !MD_Update(&m, (unsigned char *)&(md_c[0]), sizeof(md_c)) ||
+        !MD_Update(&m, local_md, MD_DIGEST_LENGTH))
+        goto err;
+    if (lock)
+        CRYPTO_w_lock(CRYPTO_LOCK_RAND);
+    if (!MD_Update(&m, md, MD_DIGEST_LENGTH) ||
+        !MD_Final(&m, md)) {
+        if (lock)
+            CRYPTO_w_unlock(CRYPTO_LOCK_RAND);
+        goto err;
+    }
+    if (lock)
+        CRYPTO_w_unlock(CRYPTO_LOCK_RAND);
 
     EVP_MD_CTX_cleanup(&m);
     if (ok)
         return (1);
+    else if (pseudo)
+        return 0;
     else {
         RANDerr(RAND_F_SSLEAY_RAND_BYTES, RAND_R_PRNG_NOT_SEEDED);
         ERR_add_error_data(1, "You need to read the OpenSSL FAQ, "
                            "http://www.openssl.org/support/faq.html");
         return (0);
     }
+
+ err:
+    EVP_MD_CTX_cleanup(&m);
+    return (0);
+}
+
+static int ssleay_rand_nopseudo_bytes(unsigned char *buf, int num)
+{
+    return ssleay_rand_bytes(buf, num, 0, 1);
 }
 
 /*
@@ -516,31 +567,23 @@ static int ssleay_rand_bytes(unsigned char *buf, int num)
  */
 static int ssleay_rand_pseudo_bytes(unsigned char *buf, int num)
 {
-    int ret;
-    unsigned long err;
-
-    ret = RAND_bytes(buf, num);
-    if (ret == 0) {
-        err = ERR_peek_error();
-        if (ERR_GET_LIB(err) == ERR_LIB_RAND &&
-            ERR_GET_REASON(err) == RAND_R_PRNG_NOT_SEEDED)
-            ERR_clear_error();
-    }
-    return (ret);
+    return ssleay_rand_bytes(buf, num, 1, 1);
 }
 
 static int ssleay_rand_status(void)
 {
+    CRYPTO_THREADID cur;
     int ret;
     int do_not_lock;
 
+    CRYPTO_THREADID_current(&cur);
     /*
      * check if we already have the lock (could happen if a RAND_poll()
      * implementation calls RAND_status())
      */
     if (crypto_lock_rand) {
         CRYPTO_r_lock(CRYPTO_LOCK_RAND2);
-        do_not_lock = (locking_thread == CRYPTO_thread_id());
+        do_not_lock = !CRYPTO_THREADID_cmp(&locking_threadid, &cur);
         CRYPTO_r_unlock(CRYPTO_LOCK_RAND2);
     } else
         do_not_lock = 0;
@@ -552,7 +595,7 @@ static int ssleay_rand_status(void)
          * prevent ssleay_rand_bytes() from trying to obtain the lock again
          */
         CRYPTO_w_lock(CRYPTO_LOCK_RAND2);
-        locking_thread = CRYPTO_thread_id();
+        CRYPTO_THREADID_cpy(&locking_threadid, &cur);
         CRYPTO_w_unlock(CRYPTO_LOCK_RAND2);
         crypto_lock_rand = 1;
     }

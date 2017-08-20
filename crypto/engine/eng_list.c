@@ -260,6 +260,7 @@ int ENGINE_add(ENGINE *e)
     }
     if ((e->id == NULL) || (e->name == NULL)) {
         ENGINEerr(ENGINE_F_ENGINE_ADD, ENGINE_R_ID_OR_NAME_MISSING);
+        return 0;
     }
     CRYPTO_w_lock(CRYPTO_LOCK_ENGINE);
     if (!engine_list_add(e)) {
@@ -310,6 +311,7 @@ static void engine_cpy(ENGINE *dest, const ENGINE *src)
     dest->store_meth = src->store_meth;
     dest->ciphers = src->ciphers;
     dest->digests = src->digests;
+    dest->pkey_meths = src->pkey_meths;
     dest->destroy = src->destroy;
     dest->init = src->init;
     dest->finish = src->finish;
@@ -378,6 +380,7 @@ ENGINE *ENGINE_by_id(const char *id)
             !ENGINE_ctrl_cmd_string(iterator, "DIR_LOAD", "2", 0) ||
             !ENGINE_ctrl_cmd_string(iterator, "DIR_ADD",
                                     load_dir, 0) ||
+            !ENGINE_ctrl_cmd_string(iterator, "LIST_ADD", "1", 0) ||
             !ENGINE_ctrl_cmd_string(iterator, "LOAD", NULL, 0))
             goto notfound;
         return iterator;

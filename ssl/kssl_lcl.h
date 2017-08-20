@@ -1,4 +1,4 @@
-/* ssl/kssl.h -*- mode: C; c-file-style: "eay" -*- */
+/* ssl/kssl.h */
 /*
  * Written by Vern Staats <staatsvr@asc.hpc.mil> for the OpenSSL project
  * 2000. project 2000.
@@ -76,7 +76,7 @@ void print_krb5_keyblock(char *label, krb5_keyblock *keyblk);
 char *kstring(char *string);
 char *knumber(int len, krb5_octet *contents);
 
-EVP_CIPHER *kssl_map_enc(krb5_enctype enctype);
+const EVP_CIPHER *kssl_map_enc(krb5_enctype enctype);
 
 int kssl_keytab_is_available(KSSL_CTX *kssl_ctx);
 int kssl_tgt_is_available(KSSL_CTX *kssl_ctx);

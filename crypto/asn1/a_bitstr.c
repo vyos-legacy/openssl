@@ -114,10 +114,11 @@ int i2c_ASN1_BIT_STRING(ASN1_BIT_STRING *a, unsigned char **pp)
 
     *(p++) = (unsigned char)bits;
     d = a->data;
-    memcpy(p, d, len);
-    p += len;
-    if (len > 0)
+    if (len > 0) {
+        memcpy(p, d, len);
+        p += len;
         p[-1] &= (0xff << bits);
+    }
     *pp = p;
     return (ret);
 }
@@ -233,4 +234,30 @@ int ASN1_BIT_STRING_get_bit(ASN1_BIT_STRING *a, int n)
     if ((a == NULL) || (a->length < (w + 1)) || (a->data == NULL))
         return (0);
     return ((a->data[w] & v) != 0);
+}
+
+/*
+ * Checks if the given bit string contains only bits specified by
+ * the flags vector. Returns 0 if there is at least one bit set in 'a'
+ * which is not specified in 'flags', 1 otherwise.
+ * 'len' is the length of 'flags'.
+ */
+int ASN1_BIT_STRING_check(ASN1_BIT_STRING *a,
+                          unsigned char *flags, int flags_len)
+{
+    int i, ok;
+    /* Check if there is one bit set at all. */
+    if (!a || !a->data)
+        return 1;
+
+    /*
+     * Check each byte of the internal representation of the bit string.
+     */
+    ok = 1;
+    for (i = 0; i < a->length && ok; ++i) {
+        unsigned char mask = i < flags_len ? ~flags[i] : 0xff;
+        /* We are done if there is an unneeded bit set. */
+        ok = (a->data[i] & mask) == 0;
+    }
+    return ok;
 }

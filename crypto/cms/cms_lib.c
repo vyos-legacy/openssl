@@ -53,7 +53,7 @@
  */
 
 #include <openssl/asn1t.h>
-#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/bio.h>
@@ -61,7 +61,8 @@
 #include "cms.h"
 #include "cms_lcl.h"
 
-IMPLEMENT_ASN1_FUNCTIONS_const(CMS_ContentInfo)
+IMPLEMENT_ASN1_FUNCTIONS(CMS_ContentInfo)
+IMPLEMENT_ASN1_PRINT_FUNCTION(CMS_ContentInfo)
 
 DECLARE_ASN1_ITEM(CMS_CertificateChoices)
 DECLARE_ASN1_ITEM(CMS_RevocationInfoChoice)
@@ -338,19 +339,10 @@ void cms_DigestAlgorithm_set(X509_ALGOR *alg, const EVP_MD *md)
 {
     int param_type;
 
-    switch (EVP_MD_type(md)) {
-    case NID_sha1:
-    case NID_sha224:
-    case NID_sha256:
-    case NID_sha384:
-    case NID_sha512:
+    if (md->flags & EVP_MD_FLAG_DIGALGID_ABSENT)
         param_type = V_ASN1_UNDEF;
-        break;
-
-    default:
+    else
         param_type = V_ASN1_NULL;
-        break;
-    }
 
     X509_ALGOR_set0(alg, OBJ_nid2obj(EVP_MD_type(md)), param_type, NULL);
 
@@ -406,10 +398,8 @@ int cms_DigestAlgorithm_find_ctx(EVP_MD_CTX *mctx, BIO *chain,
              * Workaround for broken implementations that use signature
              * algorithm OID instead of digest.
              */
-            || EVP_MD_pkey_type(EVP_MD_CTX_md(mtmp)) == nid) {
-            EVP_MD_CTX_copy_ex(mctx, mtmp);
-            return 1;
-        }
+            || EVP_MD_pkey_type(EVP_MD_CTX_md(mtmp)) == nid)
+            return EVP_MD_CTX_copy_ex(mctx, mtmp);
         chain = BIO_next(chain);
     }
 }
@@ -423,6 +413,8 @@ static STACK_OF(CMS_CertificateChoices)
         return &cms->d.signedData->certificates;
 
     case NID_pkcs7_enveloped:
+        if (cms->d.envelopedData->originatorInfo == NULL)
+            return NULL;
         return &cms->d.envelopedData->originatorInfo->certificates;
 
     default:
@@ -498,6 +490,8 @@ static STACK_OF(CMS_RevocationInfoChoice)
         return &cms->d.signedData->crls;
 
     case NID_pkcs7_enveloped:
+        if (cms->d.envelopedData->originatorInfo == NULL)
+            return NULL;
         return &cms->d.envelopedData->originatorInfo->crls;
 
     default:
@@ -538,6 +532,15 @@ int CMS_add0_crl(CMS_ContentInfo *cms, X509_CRL *crl)
     rch->type = CMS_REVCHOICE_CRL;
     rch->d.crl = crl;
     return 1;
+}
+
+int CMS_add1_crl(CMS_ContentInfo *cms, X509_CRL *crl)
+{
+    int r;
+    r = CMS_add0_crl(cms, crl);
+    if (r > 0)
+        CRYPTO_add(&crl->references, 1, CRYPTO_LOCK_X509_CRL);
+    return r;
 }
 
 STACK_OF(X509) *CMS_get1_certs(CMS_ContentInfo *cms)
@@ -593,4 +596,61 @@ STACK_OF(X509_CRL) *CMS_get1_crls(CMS_ContentInfo *cms)
         }
     }
     return crls;
+}
+
+int cms_ias_cert_cmp(CMS_IssuerAndSerialNumber *ias, X509 *cert)
+{
+    int ret;
+    ret = X509_NAME_cmp(ias->issuer, X509_get_issuer_name(cert));
+    if (ret)
+        return ret;
+    return ASN1_INTEGER_cmp(ias->serialNumber, X509_get_serialNumber(cert));
+}
+
+int cms_keyid_cert_cmp(ASN1_OCTET_STRING *keyid, X509 *cert)
+{
+    X509_check_purpose(cert, -1, -1);
+    if (!cert->skid)
+        return -1;
+    return ASN1_OCTET_STRING_cmp(keyid, cert->skid);
+}
+
+int cms_set1_ias(CMS_IssuerAndSerialNumber **pias, X509 *cert)
+{
+    CMS_IssuerAndSerialNumber *ias;
+    ias = M_ASN1_new_of(CMS_IssuerAndSerialNumber);
+    if (!ias)
+        goto err;
+    if (!X509_NAME_set(&ias->issuer, X509_get_issuer_name(cert)))
+        goto err;
+    if (!ASN1_STRING_copy(ias->serialNumber, X509_get_serialNumber(cert)))
+        goto err;
+    if (*pias)
+        M_ASN1_free_of(*pias, CMS_IssuerAndSerialNumber);
+    *pias = ias;
+    return 1;
+ err:
+    if (ias)
+        M_ASN1_free_of(ias, CMS_IssuerAndSerialNumber);
+    CMSerr(CMS_F_CMS_SET1_IAS, ERR_R_MALLOC_FAILURE);
+    return 0;
+}
+
+int cms_set1_keyid(ASN1_OCTET_STRING **pkeyid, X509 *cert)
+{
+    ASN1_OCTET_STRING *keyid = NULL;
+    X509_check_purpose(cert, -1, -1);
+    if (!cert->skid) {
+        CMSerr(CMS_F_CMS_SET1_KEYID, CMS_R_CERTIFICATE_HAS_NO_KEYID);
+        return 0;
+    }
+    keyid = ASN1_STRING_dup(cert->skid);
+    if (!keyid) {
+        CMSerr(CMS_F_CMS_SET1_KEYID, ERR_R_MALLOC_FAILURE);
+        return 0;
+    }
+    if (*pkeyid)
+        ASN1_OCTET_STRING_free(*pkeyid);
+    *pkeyid = keyid;
+    return 1;
 }

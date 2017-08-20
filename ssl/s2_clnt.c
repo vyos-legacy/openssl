@@ -117,7 +117,7 @@
 # include <openssl/objects.h>
 # include <openssl/evp.h>
 
-static SSL_METHOD *ssl2_get_client_method(int ver);
+static const SSL_METHOD *ssl2_get_client_method(int ver);
 static int get_server_finished(SSL *s);
 static int get_server_verify(SSL *s);
 static int get_server_hello(SSL *s);
@@ -129,7 +129,7 @@ static int ssl_rsa_public_encrypt(SESS_CERT *sc, int len, unsigned char *from,
                                   unsigned char *to, int padding);
 # define BREAK   break
 
-static SSL_METHOD *ssl2_get_client_method(int ver)
+static const SSL_METHOD *ssl2_get_client_method(int ver)
 {
     if (ver == SSL2_VERSION)
         return (SSLv2_client_method());
@@ -355,14 +355,16 @@ static int get_server_hello(SSL *s)
                 SSLerr(SSL_F_GET_SERVER_HELLO, SSL_R_PEER_ERROR);
             return (-1);
         }
-# ifdef __APPLE_CC__
-        /*
-         * The Rhapsody 5.5 (a.k.a. MacOS X) compiler bug workaround.
-         * <appro@fy.chalmers.se>
-         */
-        s->hit = (i = *(p++)) ? 1 : 0;
-# else
+# if 0
         s->hit = (*(p++)) ? 1 : 0;
+        /*
+         * Some [PPC?] compilers fail to increment p in above statement, e.g.
+         * one provided with Rhapsody 5.5, but most recent example XL C 11.1
+         * for AIX, even without optimization flag...
+         */
+# else
+        s->hit = (*p) ? 1 : 0;
+        p++;
 # endif
         s->s2->tmp.cert_type = *(p++);
         n2s(p, i);
@@ -416,19 +418,19 @@ static int get_server_hello(SSL *s)
             return (-1);
         }
     } else {
-# ifdef undef
+# if 0
         /* very bad */
         memset(s->session->session_id, 0,
                SSL_MAX_SSL_SESSION_ID_LENGTH_IN_BYTES);
         s->session->session_id_length = 0;
-        */
 # endif
-            /*
-             * we need to do this in case we were trying to reuse a client
-             * session but others are already reusing it. If this was a new
-             * 'blank' session ID, the session-id length will still be 0
-             */
-            if (s->session->session_id_length > 0) {
+
+        /*
+         * we need to do this in case we were trying to reuse a client
+         * session but others are already reusing it. If this was a new
+         * 'blank' session ID, the session-id length will still be 0
+         */
+        if (s->session->session_id_length > 0) {
             if (!ssl_get_new_session(s, 0)) {
                 ssl2_return_error(s, SSL2_PE_UNDEFINED_ERROR);
                 return (-1);
@@ -579,7 +581,7 @@ static int client_hello(SSL *s)
         /*
          * challenge id data
          */
-        if (RAND_pseudo_bytes(s->s2->challenge, SSL2_CHALLENGE_LENGTH) <= 0)
+        if (RAND_bytes(s->s2->challenge, SSL2_CHALLENGE_LENGTH) <= 0)
             return -1;
         memcpy(d, s->s2->challenge, SSL2_CHALLENGE_LENGTH);
         d += SSL2_CHALLENGE_LENGTH;
@@ -604,7 +606,7 @@ static int client_master_key(SSL *s)
     buf = (unsigned char *)s->init_buf->data;
     if (s->state == SSL2_ST_SEND_CLIENT_MASTER_KEY_A) {
 
-        if (!ssl_cipher_get_evp(s->session, &c, &md, NULL)) {
+        if (!ssl_cipher_get_evp(s->session, &c, &md, NULL, NULL, NULL)) {
             ssl2_return_error(s, SSL2_PE_NO_CIPHER);
             SSLerr(SSL_F_CLIENT_MASTER_KEY,
                    SSL_R_PROBLEMS_MAPPING_CIPHER_FUNCTIONS);
@@ -627,7 +629,7 @@ static int client_master_key(SSL *s)
             return -1;
         }
         if (i > 0)
-            if (RAND_pseudo_bytes(sess->key_arg, i) <= 0)
+            if (RAND_bytes(sess->key_arg, i) <= 0)
                 return -1;
 
         /* make a master key */
@@ -836,8 +838,13 @@ static int client_certificate(SSL *s)
         EVP_SignInit_ex(&ctx, s->ctx->rsa_md5, NULL);
         EVP_SignUpdate(&ctx, s->s2->key_material, s->s2->key_material_length);
         EVP_SignUpdate(&ctx, cert_ch, (unsigned int)cert_ch_len);
-        n = i2d_X509(s->session->sess_cert->peer_key->x509, &p);
-        EVP_SignUpdate(&ctx, buf, (unsigned int)n);
+        i = i2d_X509(s->session->sess_cert->peer_key->x509, &p);
+        /*
+         * Don't update the signature if it fails - FIXME: probably should
+         * handle this better
+         */
+        if (i > 0)
+            EVP_SignUpdate(&ctx, buf, (unsigned int)i);
 
         p = buf;
         d = p + 6;

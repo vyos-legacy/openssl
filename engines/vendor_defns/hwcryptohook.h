@@ -180,32 +180,32 @@ typedef struct {
                                  * be power of 2 */
     int mslimbfirst;            /* 0 or 1 */
     int msbytefirst;            /* 0 or 1; -1 = native */
-    /*-
-     * All the callback functions should return 0 on success, or a
-     * nonzero integer (whose value will be visible in the error message
-     * put in the buffer passed to the call).
-     *
-     * If a callback is not available pass a null function pointer.
-     *
-     * The callbacks may not call down again into the crypto plugin.
-     */
-    /*-
-     * For thread-safety.  Set everything to 0 if you promise only to be
-     * singlethreaded.  maxsimultaneous is the number of calls to
-     * ModExp[Crt]/RSAImmed{Priv,Pub}/RSA.  If you don't know what to
-     * put there then say 0 and the hook library will use a default.
-     *
-     * maxmutexes is a small limit on the number of simultaneous mutexes
-     * which will be requested by the library.  If there is no small
-     * limit, set it to 0.  If the crypto plugin cannot create the
-     * advertised number of mutexes the calls to its functions may fail.
-     * If a low number of mutexes is advertised the plugin will try to
-     * do the best it can.  Making larger numbers of mutexes available
-     * may improve performance and parallelism by reducing contention
-     * over critical sections.  Unavailability of any mutexes, implying
-     * single-threaded operation, should be indicated by the setting
-     * mutex_init et al to 0.
-     */
+  /*-
+   * All the callback functions should return 0 on success, or a
+   * nonzero integer (whose value will be visible in the error message
+   * put in the buffer passed to the call).
+   *
+   * If a callback is not available pass a null function pointer.
+   *
+   * The callbacks may not call down again into the crypto plugin.
+   */
+  /*-
+   * For thread-safety.  Set everything to 0 if you promise only to be
+   * singlethreaded.  maxsimultaneous is the number of calls to
+   * ModExp[Crt]/RSAImmed{Priv,Pub}/RSA.  If you don't know what to
+   * put there then say 0 and the hook library will use a default.
+   *
+   * maxmutexes is a small limit on the number of simultaneous mutexes
+   * which will be requested by the library.  If there is no small
+   * limit, set it to 0.  If the crypto plugin cannot create the
+   * advertised number of mutexes the calls to its functions may fail.
+   * If a low number of mutexes is advertised the plugin will try to
+   * do the best it can.  Making larger numbers of mutexes available
+   * may improve performance and parallelism by reducing contention
+   * over critical sections.  Unavailability of any mutexes, implying
+   * single-threaded operation, should be indicated by the setting
+   * mutex_init et al to 0.
+   */
     int maxmutexes;
     int maxsimultaneous;
     size_t mutexsize;

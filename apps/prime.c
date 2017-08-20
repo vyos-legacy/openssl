@@ -61,6 +61,9 @@ int MAIN(int argc, char **argv)
 {
     int hex = 0;
     int checks = 20;
+    int generate = 0;
+    int bits = 0;
+    int safe = 0;
     BIGNUM *bn = NULL;
     BIO *bio_out;
 
@@ -75,6 +78,15 @@ int MAIN(int argc, char **argv)
     while (argc >= 1 && **argv == '-') {
         if (!strcmp(*argv, "-hex"))
             hex = 1;
+        else if (!strcmp(*argv, "-generate"))
+            generate = 1;
+        else if (!strcmp(*argv, "-bits"))
+            if (--argc < 1)
+                goto bad;
+            else
+                bits = atoi(*++argv);
+        else if (!strcmp(*argv, "-safe"))
+            safe = 1;
         else if (!strcmp(*argv, "-checks"))
             if (--argc < 1)
                 goto bad;
@@ -88,7 +100,7 @@ int MAIN(int argc, char **argv)
         ++argv;
     }
 
-    if (argv[0] == NULL) {
+    if (argv[0] == NULL && !generate) {
         BIO_printf(bio_err, "No prime specified\n");
         goto bad;
     }
@@ -103,15 +115,37 @@ int MAIN(int argc, char **argv)
 #endif
     }
 
-    if (hex)
-        BN_hex2bn(&bn, argv[0]);
-    else
-        BN_dec2bn(&bn, argv[0]);
+    if (generate) {
+        char *s;
 
-    BN_print(bio_out, bn);
-    BIO_printf(bio_out, " is %sprime\n",
-               BN_is_prime_ex(bn, checks, NULL, NULL) ? "" : "not ");
+        if (!bits) {
+            BIO_printf(bio_err, "Specifiy the number of bits.\n");
+            return 1;
+        }
+        bn = BN_new();
+        BN_generate_prime_ex(bn, bits, safe, NULL, NULL, NULL);
+        s = hex ? BN_bn2hex(bn) : BN_bn2dec(bn);
+        BIO_printf(bio_out, "%s\n", s);
+        OPENSSL_free(s);
+    } else {
+        int r;
 
+        if (hex)
+            r = BN_hex2bn(&bn, argv[0]);
+        else
+            r = BN_dec2bn(&bn, argv[0]);
+
+        if(!r) {
+            BIO_printf(bio_err, "Failed to process value (%s)\n", argv[0]);
+            goto end;
+        }
+
+        BN_print(bio_out, bn);
+        BIO_printf(bio_out, " is %sprime\n",
+                   BN_is_prime_ex(bn, checks, NULL, NULL) ? "" : "not ");
+    }
+
+ end:
     BN_free(bn);
     BIO_free_all(bio_out);
 
@@ -121,5 +155,8 @@ int MAIN(int argc, char **argv)
     BIO_printf(bio_err, "options are\n");
     BIO_printf(bio_err, "%-14s hex\n", "-hex");
     BIO_printf(bio_err, "%-14s number of checks\n", "-checks <n>");
+    BIO_printf(bio_err, "%-14s generate prime\n", "-generate");
+    BIO_printf(bio_err, "%-14s number of bits\n", "-bits <n>");
+    BIO_printf(bio_err, "%-14s safe prime\n", "-safe");
     return 1;
 }

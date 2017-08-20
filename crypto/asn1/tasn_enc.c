@@ -59,6 +59,7 @@
 
 #include <stddef.h>
 #include <string.h>
+#include <limits.h>
 #include "cryptlib.h"
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
@@ -153,7 +154,7 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
         return asn1_i2d_ex_primitive(pval, out, it, -1, aclass);
 
     case ASN1_ITYPE_CHOICE:
-        if (asn1_cb && !asn1_cb(ASN1_OP_I2D_PRE, pval, it))
+        if (asn1_cb && !asn1_cb(ASN1_OP_I2D_PRE, pval, it, NULL))
             return 0;
         i = asn1_get_choice_selector(pval, it);
         if ((i >= 0) && (i < it->tcount)) {
@@ -164,7 +165,7 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
             return asn1_template_ex_i2d(pchval, out, chtt, -1, aclass);
         }
         /* Fixme: error condition if selector out of range */
-        if (asn1_cb && !asn1_cb(ASN1_OP_I2D_POST, pval, it))
+        if (asn1_cb && !asn1_cb(ASN1_OP_I2D_POST, pval, it, NULL))
             return 0;
         break;
 
@@ -210,23 +211,25 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
             aclass = (aclass & ~ASN1_TFLG_TAG_CLASS)
                 | V_ASN1_UNIVERSAL;
         }
-        if (asn1_cb && !asn1_cb(ASN1_OP_I2D_PRE, pval, it))
+        if (asn1_cb && !asn1_cb(ASN1_OP_I2D_PRE, pval, it, NULL))
             return 0;
         /* First work out sequence content length */
         for (i = 0, tt = it->templates; i < it->tcount; tt++, i++) {
             const ASN1_TEMPLATE *seqtt;
             ASN1_VALUE **pseqval;
+            int tmplen;
             seqtt = asn1_do_adb(pval, tt, 1);
             if (!seqtt)
                 return 0;
             pseqval = asn1_get_field_ptr(pval, seqtt);
-            /* FIXME: check for errors in enhanced version */
-            seqcontlen += asn1_template_ex_i2d(pseqval, NULL, seqtt,
-                                               -1, aclass);
+            tmplen = asn1_template_ex_i2d(pseqval, NULL, seqtt, -1, aclass);
+            if (tmplen == -1 || (tmplen > INT_MAX - seqcontlen))
+                return -1;
+            seqcontlen += tmplen;
         }
 
         seqlen = ASN1_object_size(ndef, seqcontlen, tag);
-        if (!out)
+        if (!out || seqlen == -1)
             return seqlen;
         /* Output SEQUENCE header */
         ASN1_put_object(out, ndef, seqcontlen, tag, aclass);
@@ -242,7 +245,7 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
         }
         if (ndef == 2)
             ASN1_put_eoc(out);
-        if (asn1_cb && !asn1_cb(ASN1_OP_I2D_POST, pval, it))
+        if (asn1_cb && !asn1_cb(ASN1_OP_I2D_POST, pval, it, NULL))
             return 0;
         return seqlen;
 
@@ -339,19 +342,24 @@ static int asn1_template_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
         /* Determine total length of items */
         skcontlen = 0;
         for (i = 0; i < sk_ASN1_VALUE_num(sk); i++) {
+            int tmplen;
             skitem = sk_ASN1_VALUE_value(sk, i);
-            skcontlen += ASN1_item_ex_i2d(&skitem, NULL,
-                                          ASN1_ITEM_ptr(tt->item),
-                                          -1, iclass);
+            tmplen = ASN1_item_ex_i2d(&skitem, NULL, ASN1_ITEM_ptr(tt->item),
+                                      -1, iclass);
+            if (tmplen == -1 || (skcontlen > INT_MAX - tmplen))
+                return -1;
+            skcontlen += tmplen;
         }
         sklen = ASN1_object_size(ndef, skcontlen, sktag);
+        if (sklen == -1)
+            return -1;
         /* If EXPLICIT need length of surrounding tag */
         if (flags & ASN1_TFLG_EXPTAG)
             ret = ASN1_object_size(ndef, sklen, ttag);
         else
             ret = sklen;
 
-        if (!out)
+        if (!out || ret == -1)
             return ret;
 
         /* Now encode this lot... */
@@ -380,7 +388,7 @@ static int asn1_template_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
             return 0;
         /* Find length of EXPLICIT tag */
         ret = ASN1_object_size(ndef, i, ttag);
-        if (out) {
+        if (out && ret != -1) {
             /* Output tag and item */
             ASN1_put_object(out, ndef, i, ttag, tclass);
             ASN1_item_ex_i2d(pval, out, ASN1_ITEM_ptr(tt->item), -1, iclass);
@@ -545,7 +553,8 @@ int asn1_ex_i2c(ASN1_VALUE **pval, unsigned char *cout, int *putype,
     ASN1_STRING *strtmp;
     ASN1_OBJECT *otmp;
     int utype;
-    unsigned char *cont, c;
+    const unsigned char *cont;
+    unsigned char c;
     int len;
     const ASN1_PRIMITIVE_FUNCS *pf;
     pf = it->funcs;
@@ -610,9 +619,7 @@ int asn1_ex_i2c(ASN1_VALUE **pval, unsigned char *cout, int *putype,
         break;
 
     case V_ASN1_INTEGER:
-    case V_ASN1_NEG_INTEGER:
     case V_ASN1_ENUMERATED:
-    case V_ASN1_NEG_ENUMERATED:
         /*
          * These are all have the same content format as ASN1_INTEGER
          */

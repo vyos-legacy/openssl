@@ -4,4 +4,3 @@ usr/lib/libssl.a
 usr/lib/libcrypto.a
 usr/lib/pkgconfig
 usr/include
-usr/share/man/man3
